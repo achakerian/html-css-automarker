@@ -89,7 +89,7 @@ One HTML file (`index.html`), organised as labelled inline `<script>` modules un
 
 ## 6. Check catalogue
 
-Each check returns weighted sub-results plus evidence for passes and failures. Catalogue (26 checks):
+Each check returns weighted sub-results plus evidence for passes and failures. Catalogue (27 checks):
 
 **Navigation & site mechanics:** `navBar` (structure, coverage of other pages, working targets, styled, consistency vs site-wide modal nav set), `pageCount` (min pages, flat deduction or requirement), `brokenResources` (missing link targets, broken images/CSS, per-instance), `externalLink` (`{"policy":"forbidden"}` → instances flag absolute/drive links; `{"policy":"required","min":N}` → requirement that external informational links exist), `emailLink` (`mailto:` present), `backToTop` (lower-half anchor targeting page top; structural, since scripts don't run).
 
