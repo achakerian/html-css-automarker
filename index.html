@@ -922,11 +922,15 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       for (const req of params.requirements ?? []) {
         const hits = rules.filter(r => r.kinds.includes(req.kind) &&
           (req.origin === 'any' || !req.origin || r.origin === req.origin));
-        const pass = Math.min(1, hits.length / req.min);
+        // Distinct count ignores @media: allRules keys by selector|source|origin|media so a
+        // base rule and its @media override stay separate entries (needed by cssUnused), but
+        // here the same selector re-declared inside a media query must still count once.
+        const distinct = new Set(hits.map(h => `${h.selector}|${h.source}`)).size;
+        const pass = Math.min(1, distinct / req.min);
         subs.push(sub(`req-${req.origin ?? 'any'}-${req.kind}`,
           `${req.min}× ${req.kind} (${req.origin ?? 'any'})`, pass));
         evidence.push(ev(pass === 1 ? 'pass' : 'fail',
-          `${req.kind} (${req.origin ?? 'any'}): ${hits.length}/${req.min}` +
+          `${req.kind} (${req.origin ?? 'any'}): ${distinct}/${req.min}` +
           (hits.length ? ` — e.g. "${hits[0].selector}"` : '')));
       }
       return { subResults: subs, evidence };
@@ -935,8 +939,12 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
   A.registerCheck('cssUnused',
     { label: 'No unused CSS selectors', scopes: ['site'], params: [] },
     ({ snapshots }) => {
-      const unused = allRules(snapshots).filter(r => !r.matchesAnywhere &&
-        !/^(html|body|\*|:root)/i.test(r.selector.trim()));
+      // Exclude a rule only when EVERY comma-separated selector in its list — trimmed, with
+      // pseudo-classes/elements stripped — is exactly html/body/*/:root. A prefix test here
+      // would wrongly exempt real descendant selectors like "body .sidebar".
+      const stripPseudo = s => s.replace(/::?[a-z-]+(\([^)]*\))?/gi, '').trim();
+      const isBaseReset = sel => sel.split(',').every(s => /^(html|body|\*|:root)$/i.test(stripPseudo(s)));
+      const unused = allRules(snapshots).filter(r => !r.matchesAnywhere && !isBaseReset(r.selector));
       return { subResults: [sub('none', 'Every selector used somewhere',
           Math.max(0, 1 - unused.length / 10))],
         evidence: unused.length ? unused.map(r => ev('fail',

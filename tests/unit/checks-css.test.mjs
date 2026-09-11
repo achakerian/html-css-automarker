@@ -67,10 +67,30 @@ test('cssSelectorTypes: IWBS-style requirement set', async () => {
   assert.ok(r2.evidence.some(e => e.level === 'fail' && /hoverAnchor/.test(e.text)));
 });
 
+test('cssSelectorTypes: a selector re-declared inside @media counts once, not twice', async () => {
+  const site = {
+    'index.html': '<html><head><link rel="stylesheet" href="s.css"></head><body></body></html>',
+    's.css': '.box { color: red; } @media (max-width: 600px) { .box { color: blue; } }'
+  };
+  const r = await run(site, 'cssSelectorTypes',
+    { requirements: [{ kind: 'classGeneric', min: 2, origin: 'external' }] });
+  const req = r.subResults.find(s => s.id === 'req-external-classGeneric');
+  assert.equal(req.pass, 0.5);   // 1 distinct selector|source of 2 required, not 2 raw hits
+});
+
 test('cssUnused finds selectors that match nothing on any page', async () => {
   const r = await run(SITE, 'cssUnused');
   assert.ok(r.instances.some(i => /\.ghost/.test(i.text)));
   assert.ok(r.subResults[0].pass < 1);
+});
+
+test('cssUnused: exclusion is exact-selector only, not a "body"/"html" prefix match', async () => {
+  const site = { 'index.html': `<html><head><style>
+    body { margin: 0; } body .ghost-child { color: red; }
+    </style></head><body></body></html>` };
+  const r = await run(site, 'cssUnused');
+  assert.ok(r.instances.some(i => /\.ghost-child/.test(i.text)));       // flagged: real descendant selector, unmatched
+  assert.ok(!r.instances.some(i => /^Unused selector "body"/.test(i.text))); // bare "body" never flagged
 });
 
 test('inlineStyles: count and required tags', async () => {
