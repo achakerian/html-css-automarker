@@ -135,11 +135,12 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
     if (pages.length === 0) errors.push('No HTML pages found in this submission.');
 
     let homePath = null;
-    const indexes = pagePaths.filter(p => /(^|\/)index\.html?$/i.test(p))
+    const decodedPaths = pages.map(p => p.path);
+    const indexes = decodedPaths.filter(p => /(^|\/)index\.html?$/i.test(p))
       .sort((a, b) => a.split('/').length - b.split('/').length);
     if (indexes.length) homePath = indexes[0];
     else if (pages.length) {
-      const inbound = new Map(pagePaths.map(p => [p, 0]));
+      const inbound = new Map(decodedPaths.map(p => [p, 0]));
       for (const pg of pages) {
         const targets = new Set();
         for (const m of pg.html.matchAll(/href\s*=\s*["']([^"']+)["']/gi)) {
@@ -154,7 +155,7 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       }
       homePath = [...inbound.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0];
     }
-    const subPagePaths = pagePaths.filter(p => p !== homePath);
+    const subPagePaths = decodedPaths.filter(p => p !== homePath);
     return { name, files, lowerIndex, pages, homePath, subPagePaths, errors };
   }
 
