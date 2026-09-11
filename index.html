@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HTML/CSS Submission Automarker</title>
+<style id="app-style">
+/* Filled in Task 14 */
+#render-host { position: absolute; left: -100000px; top: 0; }
+</style>
+</head>
+<body>
+<div id="app"><noscript>This tool requires JavaScript.</noscript></div>
+<div id="render-host" aria-hidden="true"></div>
+<script id="module-core">
+'use strict';
+window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
+                      state: { records: [], config: null } };
+(() => {
+  const U = Automarker.util;
+  U.b64ToBytes = b64 => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  U.bytesToB64 = bytes => { let s = '';
+    for (let i = 0; i < bytes.length; i += 0x8000)
+      s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(s); };
+  U.decodeText = bytes => {
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+    catch { return new TextDecoder('iso-8859-1').decode(bytes); } };
+  U.gunzip = async bytes => new Uint8Array(await new Response(
+    new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
+  U.round1 = n => Math.round(n * 10) / 10;
+  U.clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+})();
+</script>
+<script id="module-zip"></script>
+<script id="module-submission"></script>
+<script id="module-render"></script>
+<script id="module-analyze"></script>
+<script id="module-css"></script>
+<script id="module-checks"></script>
+<script id="module-spell"></script>
+<script id="module-config"></script>
+<script id="module-scoring"></script>
+<script id="module-export"></script>
+<script id="module-ui"></script>
+<script id="module-wordlist">
+Automarker.spellData = "";/*WORDLIST*/
+</script>
+</body>
+</html>
