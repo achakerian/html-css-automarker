@@ -66,24 +66,29 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       const count = view.getUint16(eocd + 10, true);
       let off = view.getUint32(eocd + 16, true);
       const files = new Map();
-      for (let n = 0; n < count; n++) {
-        if (view.getUint32(off, true) !== 0x02014b50) throw new Error('Corrupt zip central directory');
-        const method = view.getUint16(off + 10, true);
-        const compSize = view.getUint32(off + 20, true);
-        const nameLen = view.getUint16(off + 28, true);
-        const extraLen = view.getUint16(off + 30, true);
-        const commentLen = view.getUint16(off + 32, true);
-        const localOff = view.getUint32(off + 42, true);
-        const name = new TextDecoder().decode(bytes.subarray(off + 46, off + 46 + nameLen));
-        off += 46 + nameLen + extraLen + commentLen;
-        if (name.endsWith('/')) continue;
-        const lNameLen = view.getUint16(localOff + 26, true);
-        const lExtraLen = view.getUint16(localOff + 28, true);
-        const start = localOff + 30 + lNameLen + lExtraLen;
-        const raw = bytes.subarray(start, start + compSize);
-        if (method === 0) files.set(name, raw.slice());
-        else if (method === 8) files.set(name, await inflateRaw(raw));
-        else throw new Error(`Unsupported zip compression method ${method} for ${name}`);
+      try {
+        for (let n = 0; n < count; n++) {
+          if (view.getUint32(off, true) !== 0x02014b50) throw new Error('Corrupt zip central directory');
+          const method = view.getUint16(off + 10, true);
+          const compSize = view.getUint32(off + 20, true);
+          const nameLen = view.getUint16(off + 28, true);
+          const extraLen = view.getUint16(off + 30, true);
+          const commentLen = view.getUint16(off + 32, true);
+          const localOff = view.getUint32(off + 42, true);
+          const name = new TextDecoder().decode(bytes.subarray(off + 46, off + 46 + nameLen));
+          off += 46 + nameLen + extraLen + commentLen;
+          if (name.endsWith('/')) continue;
+          const lNameLen = view.getUint16(localOff + 26, true);
+          const lExtraLen = view.getUint16(localOff + 28, true);
+          const start = localOff + 30 + lNameLen + lExtraLen;
+          const raw = bytes.subarray(start, start + compSize);
+          if (method === 0) files.set(name, raw.slice());
+          else if (method === 8) files.set(name, await inflateRaw(raw));
+          else throw new Error(`Unsupported zip compression method ${method} for ${name}`);
+        }
+      } catch (e) {
+        if (e instanceof RangeError) throw new Error('Corrupt zip central directory');
+        throw e;
       }
       return normalize(files);
     }

@@ -41,3 +41,41 @@ test('rejects non-zip data', async () => {
     app.page.evaluate(() => Automarker.ZipReader.read(new Uint8Array([1, 2, 3, 4])) ),
     /Not a zip/);
 });
+
+test('rejects corrupt central directory', async () => {
+  const buf = buildZip([{ path: 'test.txt', data: 'hello' }]);
+  const corrupted = Buffer.from(buf);
+  // Flip the central directory signature in the EOCD (offset 16-19 from EOCD start)
+  // EOCD is at end: look for 0x06054b50 and corrupt the cd_offset after it
+  const eocdPos = corrupted.length - 22;
+  // Corrupt cd_offset field at offset 16 within EOCD
+  corrupted.writeUInt32LE(0xffffffff, eocdPos + 16);
+  await assert.rejects(
+    app.page.evaluate(async b64 =>
+      Automarker.ZipReader.read(Automarker.util.b64ToBytes(b64)),
+      corrupted.toString('base64')),
+    /Corrupt/);
+});
+
+test('rejects unsupported compression method', async () => {
+  const buf = buildZip([{ path: 'test.txt', data: 'hello' }]);
+  const corrupted = Buffer.from(buf);
+  // Find and patch compression method field
+  // Local header signature is at position 0: 0x04034b50
+  // Compression method is at offset 8 (2 bytes, little-endian)
+  corrupted.writeUInt16LE(99, 8);
+  // Central directory signature is typically right after the data
+  // It has the method at offset 10 within the CD record
+  // Find CD record by searching for 0x02014b50
+  for (let i = 0; i < corrupted.length - 4; i++) {
+    if (corrupted.readUInt32LE(i) === 0x02014b50) {
+      corrupted.writeUInt16LE(99, i + 10);
+      break;
+    }
+  }
+  await assert.rejects(
+    app.page.evaluate(async b64 =>
+      Automarker.ZipReader.read(Automarker.util.b64ToBytes(b64)),
+      corrupted.toString('base64')),
+    /Unsupported/);
+});
