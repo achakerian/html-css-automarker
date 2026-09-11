@@ -1,165 +1,147 @@
-# HTML Automarker — Design Spec
+# HTML/CSS Submission Automarker — Design Spec (v2, generalised)
 
 **Date:** 2026-09-11
-**Status:** Approved approach (B: rendered analysis in the browser); spec pending user review
+**Status:** Approved (approach B + generalisation to a generic, GitHub-hosted rubric engine)
 
 ## 1. Overview
 
-A single self-contained `automarker.html` that a marker opens locally in Chrome/Edge/Firefox. The marker drags in any number of student submission zips; the tool unzips each in-browser, renders every student page in a hidden sandboxed iframe, runs a catalogue of automated checks against the live DOM and computed styles, and produces a per-student score sheet mapped to the assignment rubric (113 points → 30 marks). Nearly every rubric item is auto-scored; the small set of genuinely semantic judgments (content on-topic, image relevance, overall aesthetic) receive a heuristic suggested score that the marker confirms or adjusts with one click beside a rendered preview. Results export as a batch CSV and per-student feedback reports.
+A single self-contained `index.html` hosted on GitHub Pages (also works opened locally). Anyone — a marker with a batch of student zips, or a student self-checking one submission — picks a **rubric preset** (or builds/imports their own), drags in zip file(s), and gets a marked score sheet per submission with plain-English evidence.
 
-The scoring engine is **topic-agnostic**: the rubric lives in an editable JSON config (import/export). The default config encodes the CSE1IIT 2026 S2 "La Trobe Sports" rubric exactly. Reusing the tool for a different assignment means editing the config, not the code.
+The tool unzips each submission in-browser, renders every page in a hidden script-disabled sandboxed iframe, and runs a catalogue of automated checks against the live DOM, computed styles, and parsed CSS. Nearly every criterion is auto-scored; genuinely semantic judgments (content on-topic, image relevance, overall aesthetic) get heuristic suggested scores confirmed beside a rendered preview. Results export as batch CSV and per-submission feedback reports.
+
+**The engine is rubric-agnostic.** A rubric is a JSON config: sections of items, each item bound to a check from the catalogue with parameters, either *scored* (`max: N` points) or a *requirement* (`required: true`, pass/fail). Two presets ship built in:
+
+- **CSE1IIT 2026 S2** (La Trobe "La Trobe Sports", 113 pts → 30 marks) — points-based design rubric.
+- **IWBS001 A2** (3-page portfolio) — requirements checklist, heavy on CSS-structural rules.
+
+A **rubric builder UI** lets non-technical users compose a rubric from the check catalogue (pick checks, set points/thresholds/params) and export/import/share the JSON.
 
 ## 2. Goals and non-goals
 
 **Goals**
 
-- Batch marking: N zips in, N score sheets out, with a review UI per student.
-- Auto-score every rubric item that is mechanically checkable; suggested scores + fast confirmation for semantic items.
-- Evidence for every score: plain-English findings the marker can paste into feedback.
-- Topic-agnostic rubric/config; the default config is this assignment.
-- Fully offline, zero-install: one HTML file, no CDN, no network requests.
-- A thorough automated test suite covering every check in the rubric catalogue.
+- Batch or single-submission marking; identical flow for marker and student self-check.
+- Auto-score every mechanically checkable criterion; assisted confirm for semantic items.
+- Evidence for every score, usable directly as feedback.
+- Rubric-agnostic engine + preset library + builder UI + JSON import/export.
+- Fully offline-capable, zero-install, single static file; publishable via GitHub Pages from the main branch, MIT licensed, with a README covering usage and rubric authoring.
+- A thorough automated test suite covering every check in the catalogue and both presets end-to-end.
 
 **Non-goals**
 
-- No LMS integration, no server, no database.
-- No AI/API scoring (could be added later; explicitly out of scope now).
-- Student JavaScript is never executed (this is an HTML/CSS assignment; rendering is script-disabled for safety and determinism).
-- No plagiarism/similarity detection.
+- No LMS integration, server, database, or AI/API scoring.
+- Submission JavaScript never executes (HTML/CSS assignments; deterministic + safe). CSS animations still run.
+- No plagiarism/similarity detection. No NLP parsing of rubric documents (builder UI instead).
 
 ## 3. Architecture
 
-One HTML file, internally organised as labelled `<script>` modules (single file is the deliverable; there is no build step):
+One HTML file (`index.html`), organised as labelled inline `<script>` modules under a single `window.Automarker` namespace (no build step; a one-time `tools/embed-wordlist.mjs` injects the spell-check wordlist between markers):
 
 | Module | Responsibility |
 |---|---|
-| `ZipReader` | Dependency-free zip parsing (central directory walk; stored + deflate entries via native `DecompressionStream('deflate-raw')`). |
-| `SubmissionLoader` | Zip → submission model: file map, HTML page discovery, home-page identification, student name from zip filename. |
-| `PageRenderer` | Renders one HTML page into a hidden `<iframe sandbox="allow-same-origin">` via a blob URL, with all relative asset references (img `src`/`srcset`, `<link>` CSS, CSS `url()`, favicons) rewritten to blob URLs resolved against the page's path inside the zip. Scripts do not run (no `allow-scripts`); the parent can read `contentDocument` and computed styles. |
-| `PageAnalyzer` | Extracts a **PageSnapshot** from the rendered iframe: link graph, images (resolved/broken, natural + displayed size), computed colour palette, font families/sizes, margin/padding/white-space metrics, section/heading structure, visible text, element positions, total asset bytes. |
-| `Checks` | The check catalogue (Section 6). Pure functions: `(snapshotOrSnapshots, params) → {subResults[], evidence[]}`. Exposed on `window.Automarker.checks` for testing. |
-| `ScoringEngine` | Applies the rubric config to check results: per-item score = `round(maxPoints × weighted pass fraction)` of sub-results, per-page aggregation for sub-page criteria (mean of per-page scores scaled to max), deductions, total, mapping to final marks. Marker overrides always win and are flagged in exports. |
-| `SpellCheck` | Embedded wordlist (gzipped, base64-inlined, inflated at runtime via `DecompressionStream('gzip')`); suffix stripping (s, es, ed, ing, 's, ly); skips capitalised words mid-sentence proper-noun style, numbers, and config whitelist. Emits candidates only — deductions require marker confirmation. |
-| `UI` | Batch sidebar, per-student score sheet with evidence + override controls, per-page preview panes, semantic-item confirmation strip, spelling checklist, config editor, exports. |
-| `Exporter` | Batch CSV (one row per student, one column per rubric item + sections + total + mapped mark + override flags) and per-student printable feedback report built from evidence lines. |
+| `ZipReader` | Dependency-free zip parsing (central directory; stored + deflate via native `DecompressionStream('deflate-raw')`). |
+| `SubmissionLoader` | Zip → submission model: file map, HTML page discovery, home-page identification, name from zip filename; junk/nested-root normalisation. |
+| `PageRenderer` | Renders one page into `<iframe sandbox="allow-same-origin">` via blob URLs; rewrites relative refs (img/srcset, CSS links, CSS `url()`, video/source) to blobs; records broken and external refs; scripts never run. |
+| `PageAnalyzer` | Rendered iframe → JSON-serialisable **PageSnapshot**: link graph, nav, images/media, palette, typography (incl. contrast), spacing/white-space, structure, visible text, anchors, inline styles, page weight, responsive re-measures at configurable widths (default 1280/768/375). |
+| `CssAnalyzer` | Collects external/embedded rules per page; classifies each rule (generic class, tag-scoped class, heading style, `a:hover`, group, contextual, id-on-heading, button, flexbox, positioning, body/header/footer, paragraph format) and records whether it matches anything on the page (for unused-CSS detection). |
+| `Checks` | The catalogue (Section 6). Pure functions `(ctx) → CheckResult`; `ctx = {snapshot?, snapshots, submission, config, params}`. Exposed as `Automarker.checks` with `Automarker.checkMeta` (labels/params/scopes) driving the builder UI. |
+| `ScoringEngine` | Config → sheet: item expansion by scope, weighted sub-results → scores, requirement pass/fail, per-page aggregation, deductions, totals, points→marks mapping, overrides, spelling confirmation. |
+| `SpellCheck` | Embedded gzipped wordlist (base64, inflated via `DecompressionStream('gzip')`); suffix stripping; skips capitalised words, numbers, config whitelist; emits candidates only — deduction requires confirmation. |
+| `Config` | Schema validation, presets (`Automarker.presets`), import/export. |
+| `UI` | Preset picker, drag-drop batch, submission sidebar, score sheet with evidence + overrides, per-page preview panes, assisted-item confirmation, spelling checklist, rubric builder, exports. |
+| `Exporter` | Batch CSV (per-item columns, override flags, totals) + per-submission printable feedback report. |
 
-`window.Automarker` exposes `{config, checks, scoring, loadSubmission(file), analyzePage(...)}` so the test suite can drive both unit-level and end-to-end paths.
+`window.Automarker` also exposes `loadSubmission`, `analyzePage`, `analyzeSubmission`, `processSubmissionBytes` so tests drive both unit and end-to-end paths.
 
-## 4. Rubric config schema (topic-agnostic)
+## 4. Rubric config schema
 
 ```json
 {
-  "meta": { "title": "...", "totalPoints": 113, "mappedMarks": 30, "minPages": 6 },
-  "topic": {
-    "keywords": ["sport", "sportswear", "shoes", "..."],
-    "sectionHints": ["products", "brands", "reservation", "contact", "about"],
-    "spellWhitelist": ["Nike", "Adidas", "ASICS", "Bundoora", "..."]
-  },
+  "meta": { "id": "cse1iit-2026s2", "title": "...", "totalPoints": 113, "mappedMarks": 30,
+            "minPages": 6, "viewport": {"w":1280,"h":800},
+            "responsiveWidths": [1280,768,375],
+            "weightThresholds": {"fullKB":1536,"partialKB":4096} },
+  "topic": { "keywords": [], "sectionHints": [], "spellWhitelist": [],
+             "logoHints": ["logo","brand"], "locationHints": ["location","contact","find","visit"] },
   "sections": [
-    {
-      "id": "nav", "title": "Navigation Bar and Links", "points": 30,
-      "items": [
-        { "id": "nav-home", "label": "...", "max": 5, "scope": "home",
-          "check": "navBar", "params": { }, "mode": "auto" }
-      ]
-    }
+    { "id": "nav", "title": "...", "points": 30, "items": [
+      { "id": "nav-home", "label": "...", "check": "navBar", "mode": "auto",
+        "scope": "home", "max": 5, "params": {} } ] }
   ],
   "deductions": [
-    { "id": "spelling", "perInstance": -1, "check": "spelling", "mode": "assisted" },
-    { "id": "broken", "perInstance": -2, "check": "brokenResources", "mode": "auto" },
-    { "id": "pageCount", "flat": -15, "check": "pageCount", "mode": "auto" }
-  ]
+    { "id": "spelling", "label": "...", "perInstance": -1, "check": "spelling", "mode": "assisted" },
+    { "id": "broken",   "label": "...", "perInstance": -2, "check": "brokenResources", "mode": "auto" },
+    { "id": "pageCount","label": "...", "flat": -15, "check": "pageCount", "mode": "auto" } ]
 }
 ```
 
-- `mode: "auto"` — score stands unless the marker overrides.
-- `mode: "assisted"` — heuristic suggested score, visually flagged; the marker confirms/adjusts (semantic items, spelling).
-- `scope` — `"home"`, `"subpages"` (aggregated across all sub-pages with per-page breakdown), or `"site"`.
-- Config editor in the UI with JSON import/export; the default config ships embedded.
+- **Item forms:** scored (`max: N`) or requirement (`required: true` — pass/fail; excluded from point totals; report shows met/unmet counts). A rubric may mix both.
+- **Scopes:** `home` (home page only), `eachSubpage` (expands to one row per sub-page, padded with zero-rows up to `minPages − 1` if pages are missing; if extra pages exist, the best-scoring `minPages − 1` count), `subpages` (aggregate: per-page score, mean scaled to max), `eachPage` (row per page, home included), `site` (whole submission).
+- **Modes:** `auto` (stands unless overridden) or `assisted` (suggested score, flagged for confirmation).
+- Config validation: every `check` id exists, scored sections sum to `meta.totalPoints`; violations reported in the UI and rejected at import.
 
 ## 5. Submission model
 
-- Each zip = one student; student label = zip filename (minus extension).
-- HTML pages: all `*.html`/`*.htm` entries (case-insensitive). Home page = `index.html` at the shallowest depth, else the page most linked-to by others, else alphabetical first — with the choice shown and correctable in the UI.
-- Sub-pages: all other pages. If more than `minPages − 1` sub-pages exist, all are analysed; the best-scoring 5 satisfy per-sub-page criteria (students aren't penalised for extra pages).
-- Malformed zips, zips-inside-folders, `__MACOSX` junk, and nested single-root folders are handled; unreadable submissions surface as an error card, never a crash.
+- Each zip = one submission; label = zip filename minus extension.
+- Pages: `*.html`/`*.htm` (case-insensitive). Home = `index.html` at shallowest depth, else most-linked-to page, else alphabetical first — shown and correctable in the UI.
+- Normalisation: `__MACOSX`, `.DS_Store`, dotfiles dropped; backslashes normalised; single nested root folder stripped; non-UTF-8 falls back to latin-1; corrupt zips become an error card without stopping the batch.
+- Renderer timeouts (10 s/page) mark affected checks "needs manual review", never hang the batch. 50 MB zip guard.
 
-## 6. Check catalogue — full rubric coverage
+## 6. Check catalogue
 
-Every rubric line maps to a check. Sub-results are individually weighted; evidence is generated for both passes and failures.
+Each check returns weighted sub-results plus evidence for passes and failures. Catalogue (26 checks):
 
-### Section 1 — Navigation (6 items × 0–5)
+**Navigation & site mechanics:** `navBar` (structure, coverage of other pages, working targets, styled, consistency vs site-wide modal nav set), `pageCount` (min pages, flat deduction or requirement), `brokenResources` (missing link targets, broken images/CSS, per-instance), `externalLink` (`{"policy":"forbidden"}` → instances flag absolute/drive links; `{"policy":"required","min":N}` → requirement that external informational links exist), `emailLink` (`mailto:` present), `backToTop` (lower-half anchor targeting page top; structural, since scripts don't run).
 
-`navBar(pageSnapshot, allPages)` per page, sub-results:
-1. A nav structure exists (`<nav>`, or a repeated link cluster ≥ (minPages − 1) internal links in header region).
-2. Links cover all other pages (fraction).
-3. All nav links resolve to files in the zip (fraction).
-4. Nav is CSS-styled (non-default computed styles: background/colour/layout on the nav or its links).
-5. Consistency: nav link set ≈ same across pages (Jaccard similarity vs site-wide modal nav set).
+**Design metrics:** `colourTheme` (non-default palette, 3–12 distinct colours, ≤2 high-saturation hues, cross-page consistency when scoped to sub-pages), `typography` (non-default fonts, body 14–20 px, contrast ≥ 4.5:1 with partial credit ≥ 3:1), `whiteSpace` (no horizontal overflow, constrained content width, inter-section gaps), `margins` (content inset from viewport edges), `sectionStructure` (≥ 2 sections, heading hierarchy, semantic tags), `images` (`min` resolved images ≥ 150 px displayed, not stretched > 1.5× natural; relevance sub-result assisted via filename/alt keywords), `logo` (keyword-matched image/brand in top region; link-to-home and left-placement sub-results), `pageWeight` (page + assets vs config thresholds).
 
-### Section 2 — Home page (11 × 0–2, plus back-to-top ×1)
+**CSS-structural (IWBS-class rubrics):** `cssExternal` (external stylesheet exists and is linked from every page), `cssSelectorTypes` (params: list of `{kind, min, origin}` where kind ∈ pFormat | classGeneric | classScoped | headingStyle | hoverAnchor | group | contextual | idOnHeading | buttonStyle | flexbox | positioning | bodyStyle | headerStyle | footerStyle and origin ∈ external | embedded | any; scores fraction of requirements met, evidence lists what's missing), `cssUnused` (selectors matching nothing on any page; requirement or per-instance), `inlineStyles` (≥ N inline styles per page; sub-results for required tags e.g. div + span).
 
-| Rubric item | Check | Heuristic sub-results |
-|---|---|---|
-| Colour theme blending (0–2) | `colourTheme` | Palette extracted from computed backgrounds/text/borders: 2–6 dominant hues (not default-white-and-black only), consistent accent reuse, no clashing high-saturation pairs. |
-| Text fonts/colours (0–2) | `typography` | Non-default `font-family` declared and applied; body text 14–20px; text/background contrast ≥ WCAG 4.5:1 on main content. |
-| Balanced layout / white space (0–2) | `whiteSpace` | Content width constrained (< 100% at desktop viewport or max-width set); non-zero padding between sections; text-density ratio in sane band; no horizontal overflow. |
-| Clear sections (0–2) | `sectionStructure` | ≥ 2 distinct content sections via semantic elements or headings; headings hierarchy present. |
-| ≥ 1 relevant, well-sized image (0–2) | `images` (semantic flag on "relevant") | ≥ 1 `<img>` that resolves, displayed ≥ 150px wide, not stretched > 1.5× natural size. Relevance = filename/alt keyword match → suggested, marker confirms. |
-| Margins (0–2) | `margins` | Body/main computed margins or padding > 0; content not flush against viewport edges. |
-| Logo, ideally top-left, links home (0–2) | `logo` | Image (or styled brand text) whose src/alt/class matches `logo|brand` or config keywords, in the top 20% of the page; bonus sub-result: wrapped in `<a>` to home. Left placement preferred, not required. |
-| Page not heavy (0–2) | `pageWeight` | Page + referenced assets ≤ configurable thresholds (default: ≤ 1.5 MB full marks, ≤ 4 MB partial). |
-| Professional aesthetic (0–2) | `aesthetic` (assisted) | Suggested score = composite of colourTheme, typography, whiteSpace, margins results; marker confirms against preview. |
-| Useful introductory info (0–2) | `contentIntro` (assisted) | ≥ 50 words of visible intro text on home; topic-keyword density > 0 → suggested; marker confirms it's genuinely on-topic. |
-| Key offerings highlight (0–2) | `offerings` (assisted) | Headings/text matching config `sectionHints` (promotions, arrivals, products) + a call-to-action link/button deeper into the site. |
-| Back-to-top button (1) | `backToTop` | Anchor/`<button>` in the lower half of the document targeting `#top`/`#`/element id at page top. (Scripts don't run; detection is structural.) |
+**Content:** `wordCount` (min words on a page/section keyword region), `mediaPresence` (required media kinds: video/iframe-embed/gif/img, per params), `contentIntro`, `offerings`, `contentRelevance` (assisted: word-count + topic-keyword heuristics, marker confirms), `directions` (location-page address/hours/map/contact patterns), `aesthetic` (assisted composite of design metrics), `responsive` (re-measure at `responsiveWidths`: no horizontal overflow and layout adapts).
 
-### Section 3 — Sub-pages (aggregated across 5 sub-pages; per-page breakdown shown)
+**Deduction-only:** `spelling` (candidates across visible text; only confirmed instances deduct).
 
-Same checks as home, re-parameterised: `colourTheme` + cross-page consistency (0–5), `typography` (0–5), `whiteSpace` (0–5), `sectionStructure` (0–5), `images` with `min: 2` (0–10), `margins` (0–5), `logo` with link-to-home required for full sub-result (0–5), `pageWeight` (0–5), `contentRelevance` (assisted, 0–5), `backToTop` (0–5), and `directions` (0–5): on the location/contact-identified page (URL/heading/keyword match), presence of address-shaped text, opening hours pattern, and a map image. Aggregation: per-page score for each criterion, mean scaled to the item max.
+### Preset mappings
 
-### Deductions
-
-- **Spelling (−1 each, assisted):** candidates from visible text across all pages; only marker-confirmed instances deduct.
-- **Broken functionality (−2 each, auto):** internal links to missing files; `<img>`/CSS assets that fail to resolve; each instance listed. Absolute/external links (`http(s):`, drive paths) are flagged here too, since the spec forbids them.
-- **Fewer than 6 pages (−15, auto).**
+- **CSE1IIT**: exactly the marking rubric — Nav 6 × 0–5 (`navBar`, home + `eachSubpage`); Home 23 (colourTheme, typography, whiteSpace, sectionStructure, images min 1, margins, logo, pageWeight, aesthetic*, contentIntro*, offerings* at 0–2 + backToTop 0–1); Sub-pages 60 (`subpages`-scoped: colourTheme 5, typography 5, whiteSpace 5, sectionStructure 5, images min 2 → 10, margins 5, logo 5, pageWeight 5, contentRelevance* 5, backToTop 5, directions 5); deductions spelling −1*, broken −2, < 6 pages −15. (* = assisted.)
+- **IWBS001**: requirements checklist — 3 pages, nav on each page covering the others; home content requirements (photo+name+ID*, quote+video/GIF via `mediaPresence`, `emailLink`, intro/skills word counts ≥ 200); favourites/place pages (word counts ≥ 250, `externalLink` policy required); full `cssSelectorTypes` set split by origin (external: pFormat, 3× classGeneric, 3× classScoped, 3× headingStyle, hoverAnchor, 2× group, contextual, buttonStyle, flexbox; embedded: idOnHeading, contextual, class-for-p, positioning, headerStyle+footerStyle, bodyStyle), `inlineStyles` ≥ 3/page incl. div + span, `cssUnused` (none allowed), `cssExternal`, `responsive`, design-quality items (consistency, contrast, typography) as scored 0–2 items, spelling deduction.
 
 ## 7. Scoring, overrides, exports
 
-- Item score = `round(max × Σ(weight × pass) / Σweight)`, clamped to the item's range. Every item shows its sub-results and evidence inline.
-- Marker override: click any score to set it directly; overrides are visually distinct and flagged in the CSV.
-- Totals: per section, deductions, total /113, mapped mark = `round(total / totalPoints × mappedMarks, 1)`, floored at 0.
-- CSV export: one row per student; columns for every item (auto score, final score, overridden?), section subtotals, deductions, total, mapped mark.
-- Feedback report: per student, printable HTML built from evidence lines grouped by rubric section.
+- Scored item: `round(max × Σ(weight × pass) / Σweight)` clamped to range; requirement item: pass iff weighted fraction ≥ params.threshold (default 1.0 for hard requirements).
+- Overrides: click any score/requirement to set it; visually distinct; flagged in CSV. Assisted items and spelling confirmations recompute totals live.
+- Totals: section subtotals, deductions, total, `mappedMark = max(0, round1(total / totalPoints × mappedMarks))`; requirement rubrics report `met/total` plus any scored subtotal.
+- Exports: batch CSV (row per submission, column per item + auto/final/overridden + totals) and printable per-submission feedback report from evidence lines.
 
-## 8. Error handling
+## 8. Testing strategy
 
-- Every per-student pipeline step is isolated: one corrupt submission shows an error card; the batch continues.
-- Missing assets, circular links, huge files (> 50 MB zip guard), non-UTF-8 encodings (fallback latin-1), and pages that fail to render all degrade to partial analysis with explicit "could not analyse X" evidence rather than silent zeros.
-- Renderer timeouts (default 10 s/page) mark affected checks "needs manual review", never hang the batch.
+Runner: `npm test` → `node:test` + Playwright headless Chromium against a local static server. Layers:
 
-## 9. Testing strategy
+1. **Check unit tests — every check, every rubric line:** pass, fail, and partial/edge cases per check, rendering purpose-built fixtures through the real renderer/analyzer pipeline and invoking `Automarker.checks.<id>` in-page.
+2. **Engine tests:** ZipReader (stored/deflated/nested-root/`__MACOSX`/corrupt), SubmissionLoader discovery rules, CssAnalyzer classification table, ScoringEngine maths (weights, clamping, scope expansion/aggregation, requirement thresholds, deductions, mapping, overrides), SpellCheck, config validation + import/export round-trip for both presets.
+3. **End-to-end fixture submissions** (generated by `tests/fixtures/sites.mjs`, zipped in-memory, loaded through the real pipeline; also writable to disk as demo zips):
+   - `alpha-perfect` — maxes every CSE1IIT auto item; zero deductions.
+   - `bravo-flawed` — seeded defects with hand-computed expected losses (missing nav link, broken link, missing image, absolute link, no logo on one sub-page, no back-to-top, heavy image, 3 misspellings).
+   - `charlie-minimal` — 5 pages (−15), unstyled.
+   - `delta-messy` — nested root, `.HTM`, spaces, `__MACOSX`: parses clean.
+   - `echo-portfolio` — meets every IWBS001 requirement.
+   - `foxtrot-gaps` — violates specific IWBS001 CSS requirements (no hover style, unused selectors, 2 generic classes, no flexbox, missing span inline style): exact unmet list asserted.
+   - Batch CSV content asserted across fixtures.
+4. **Coverage guard:** iterates both presets and fails if any item's `check` is missing from the catalogue or untested (unit-test filename convention per check id).
 
-Runner: `npm test` → Node's `node:test` + Playwright (headless Chromium) serving the repo over a local static server (blob/iframe behaviour is identical to `file://` usage but automatable). The suite has three layers:
+## 9. Repository layout
 
-**Layer 1 — Check unit tests (every check, every rubric line).** For each check in the catalogue: a passing case, a failing case, and at least one partial/edge case, driven by rendering small purpose-built HTML fixtures through the real `PageRenderer`/`PageAnalyzer` pipeline and calling `window.Automarker.checks.<id>` via `page.evaluate`. Examples: nav missing one link scores 4/5; contrast 3.9:1 fails the contrast sub-result; logo present but unlinked loses only the link sub-result; back-to-top anchor at page top (not bottom) fails.
+```
+index.html                  # the tool (deliverable, GitHub Pages entry)
+README.md                   # usage + rubric-authoring guide
+LICENSE                     # MIT
+tools/embed-wordlist.mjs    # one-time wordlist injection
+package.json                # devDeps: playwright; npm test
+tests/helpers/              # static server, browser harness, zip writer
+tests/unit/  tests/e2e/  tests/fixtures/sites.mjs
+docs/superpowers/specs|plans/
+```
 
-**Layer 2 — Engine tests.** ZipReader (stored + deflated entries, nested root folder, `__MACOSX`, corrupt zip), SubmissionLoader home-page identification rules, ScoringEngine maths (weighting, clamping, aggregation across sub-pages, deduction arithmetic, 113→30 mapping, override precedence), SpellCheck (suffix stripping, whitelist, proper-noun skip), config import/export round-trip.
+## 10. Milestones
 
-**Layer 3 — End-to-end fixture submissions.** Complete fixture sites in `tests/fixtures/sites/`, zipped by the test setup, loaded through the real drag-drop path, asserting the full score sheet against hand-computed expected values:
-- `alpha-perfect` — hits every auto criterion; expected: max on all auto items, zero deductions.
-- `bravo-flawed` — seeded defect per rubric area: one page missing nav link, one broken link, one missing image, an absolute link, no logo on one sub-page, no back-to-top anywhere, heavy image, 3 misspellings; expected exact point losses per item.
-- `charlie-minimal` — only 5 pages (−15), unstyled HTML; expected low design scores + deduction.
-- `delta-messy` — nested folder root, uppercase `.HTM` extensions, spaces in filenames, `__MACOSX` junk; expected: parses fine, correct page discovery.
-- CSV export content is asserted for the whole batch.
-
-Fixtures double as manual demo data. A test fails if any rubric config item lacks a mapped check (coverage guard: the suite iterates the default config and asserts every `check` id exists and is unit-tested).
-
-## 10. Milestones (for the implementation plan)
-
-1. ZipReader + SubmissionLoader (+ tests)
-2. PageRenderer + PageAnalyzer snapshot (+ tests)
-3. Check catalogue, config schema, ScoringEngine (+ per-check tests)
-4. SpellCheck with embedded wordlist (+ tests)
-5. UI: batch flow, score sheet, previews, overrides, config editor
-6. Exports + E2E fixture suite + coverage guard
+1. Scaffold (repo, harness, skeleton) → 2. ZipReader → 3. SubmissionLoader → 4. PageRenderer → 5–6. PageAnalyzer (core, then style/responsive metrics) → 7. CssAnalyzer → 8–11. Check catalogue (+ SpellCheck) → 12. Config + presets → 13. ScoringEngine → 14. UI → 15. Builder + exports → 16. E2E fixtures + coverage guard + README.
