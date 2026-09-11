@@ -41,7 +41,9 @@ below for building your own from the in-app JSON rubric builder.
    deductions apply only once confirmed, so a false positive costs nothing
    until you say so.
 7. Export a CSV across every marked submission, or a per-student HTML
-   feedback report, from the toolbar.
+   feedback report, from the toolbar. For large batches, export the CSV
+   periodically as you go rather than only at the end — it costs nothing and
+   protects your marking if the tab crashes or the browser is closed early.
 
 ## Quick start — for students
 
@@ -61,8 +63,8 @@ below for building your own from the in-app JSON rubric builder.
 
 ## Rubric authoring
 
-Rubrics are plain JSON objects, editable live from **Rubric → Open builder**
-(validates before it lets you apply/save one), or as `Automarker.presets`
+Rubrics are plain JSON objects, editable live from the **Rubric builder**
+button (validates before it lets you apply/save one), or as `Automarker.presets`
 entries in `index.html` for anyone extending the tool itself.
 
 ### Config schema
@@ -242,6 +244,11 @@ check ships with no unit test).
   fast first pass that catches the mechanical stuff (broken links, missing
   pages, no back-to-top, absolute URLs) reliably, and leans on you for
   everything that requires judgment.
+- **`@import` is only partly followed.** A stylesheet's `@import` of a local
+  file in the same submission is inlined one level deep (its own `url(...)`
+  references are rewritten and its rules are analysed); anything beyond that
+  first level, and any `@import` of an external URL, is stripped out and
+  flagged rather than fetched or resolved.
 
 ## License
 
