@@ -622,7 +622,128 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
   });
 })();
 </script>
-<script id="module-checks"></script>
+<script id="module-checks">
+(() => {
+  const A = Automarker;
+  const sub = (id, label, pass, weight = 1) =>
+    ({ id, label, pass: A.util.clamp(pass, 0, 1), weight });
+  const ev = (level, text) => ({ level, text });
+  const frac = (list, pred) => list.length ? list.filter(pred).length / list.length : 0;
+  const jaccard = (a, b) => { const A1 = new Set(a), B1 = new Set(b);
+    const inter = [...A1].filter(x => B1.has(x)).length;
+    const uni = new Set([...A1, ...B1]).size;
+    return uni ? inter / uni : 1; };
+  A.checkUtil = { sub, ev, frac, jaccard };
+  A.registerCheck = (id, meta, fn) => { A.checks[id] = fn; A.checkMeta[id] = meta; };
+  const livePages = snapshots => Object.values(snapshots).filter(s => !s.error);
+
+  A.registerCheck('navBar',
+    { label: 'Navigation bar (structure, coverage, working links, styling, consistency)',
+      scopes: ['home', 'eachSubpage', 'eachPage'], params: [] },
+    ({ snapshot: s, snapshots }) => {
+      const others = livePages(snapshots).map(p => p.path).filter(p => p !== s.path);
+      const navLinks = s.links.filter(l => l.inNav && l.internal);
+      const fullSet = p => JSON.stringify([...new Set([p.path, ...p.nav.linkTargets])].sort());
+      const counts = new Map();
+      for (const p of livePages(snapshots)) counts.set(fullSet(p), (counts.get(fullSet(p)) || 0) + 1);
+      const modal = JSON.parse([...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? '[]');
+      const evidence = [];
+      const missing = others.filter(p => !s.nav.linkTargets.includes(p));
+      if (missing.length) evidence.push(ev('fail', `${s.path}: nav missing link(s) to ${missing.join(', ')}`));
+      const dead = navLinks.filter(l => !l.targetExists);
+      if (dead.length) evidence.push(ev('fail', `${s.path}: nav link(s) to missing file(s): ${dead.map(l => l.raw).join(', ')}`));
+      if (!missing.length && !dead.length) evidence.push(ev('pass', `${s.path}: nav links to all ${others.length} other page(s) and all targets exist`));
+      if (s.nav.styledSignals < 2) evidence.push(ev('fail', `${s.path}: nav appears unstyled (only ${s.nav.styledSignals} styling signals)`));
+      return { subResults: [
+        sub('structure', 'Nav structure present', (s.nav.hasNavElement || navLinks.length >= 2) ? 1 : 0),
+        sub('coverage', 'Links to every other page',
+          Math.max(0, 1 - 0.4 * missing.length), 2),
+        sub('working', 'Nav link targets exist', navLinks.length ? frac(navLinks, l => l.targetExists) : 0),
+        sub('styled', 'Nav is CSS-styled', Math.min(1, s.nav.styledSignals / 2)),
+        sub('consistency', 'Consistent with site nav', jaccard(JSON.parse(fullSet(s)), modal))
+      ], evidence };
+    });
+
+  A.registerCheck('pageCount',
+    { label: 'Minimum page count', scopes: ['site'],
+      params: [{ key: 'min', label: 'Minimum pages', type: 'number', default: 6 }] },
+    ({ submission, config, params }) => {
+      const min = params.min ?? config.meta.minPages;
+      const n = submission.pages.length;
+      const short = n < min;
+      return { subResults: [sub('count', `At least ${min} pages`, Math.min(1, n / min))],
+        evidence: [ev(short ? 'fail' : 'pass', `${n} of ${min} required page(s) found`)],
+        instances: short ? [{ text: `Only ${n} of ${min} required pages found` }] : [] };
+    });
+
+  A.registerCheck('brokenResources',
+    { label: 'Broken links / images / assets', scopes: ['site'], params: [] },
+    ({ snapshots }) => {
+      const seen = new Set(); const instances = [];
+      const add = (page, kind, url) => { const k = `${page}|${url}`;
+        if (seen.has(k)) return; seen.add(k);
+        instances.push({ page, text: `${page}: ${kind} "${url}"` }); };
+      for (const s of livePages(snapshots)) {
+        for (const l of s.links) if (l.internal && !l.targetExists) add(s.path, 'link target missing', l.raw);
+        for (const b of s.brokenAssets) add(s.path, `broken ${b.kind}`, b.url);
+        for (const i of s.images) if (!i.ok && !i.external &&
+          !s.brokenAssets.some(b => b.url === i.raw)) add(s.path, 'image failed to display', i.raw);
+      }
+      return { subResults: [sub('none', 'No broken links or assets', instances.length ? 0 : 1)],
+        evidence: instances.length ? instances.map(i => ev('fail', i.text))
+                                   : [ev('pass', 'No broken links, images, or assets found')],
+        instances };
+    });
+
+  A.registerCheck('externalLink',
+    { label: 'External links policy', scopes: ['site', 'home', 'eachPage'],
+      params: [{ key: 'policy', label: 'forbidden or required', type: 'string', default: 'forbidden' },
+               { key: 'min', label: 'Minimum required', type: 'number', default: 1 }] },
+    ({ snapshot, snapshots, params }) => {
+      const pages = snapshot ? [snapshot] : livePages(snapshots);
+      const extLinks = pages.flatMap(s => s.links.filter(l => l.external)
+        .map(l => ({ page: s.path, url: l.raw })));
+      const extRefs = pages.flatMap(s => (s.externalRefs || [])
+        .map(r => ({ page: r.page ?? s.path, url: r.url })));
+      if (params.policy === 'required') {
+        const min = params.min ?? 1;
+        return { subResults: [sub('present', `≥ ${min} external reference link(s)`,
+            Math.min(1, extLinks.length / min))],
+          evidence: [ev(extLinks.length >= min ? 'pass' : 'fail',
+            `${extLinks.length} external link(s) found${extLinks[0] ? ` (e.g. ${extLinks[0].url})` : ''}`)] };
+      }
+      const all = [...extLinks, ...extRefs];
+      const seen = new Set(); const instances = [];
+      for (const e of all) { const k = `${e.page}|${e.url}`; if (seen.has(k)) continue;
+        seen.add(k); instances.push({ page: e.page, text: `${e.page}: external/absolute reference "${e.url}"` }); }
+      return { subResults: [sub('none', 'No external/absolute references', instances.length ? 0 : 1)],
+        evidence: instances.length ? instances.map(i => ev('fail', i.text))
+                                   : [ev('pass', 'All references are relative')],
+        instances };
+    });
+
+  A.registerCheck('emailLink',
+    { label: 'Email (mailto:) link present', scopes: ['site', 'home', 'eachPage'], params: [] },
+    ({ snapshot, snapshots }) => {
+      const pages = snapshot ? [snapshot] : livePages(snapshots);
+      const hit = pages.flatMap(s => s.links).find(l => l.mailto);
+      return { subResults: [sub('mailto', 'mailto: link present', hit ? 1 : 0)],
+        evidence: [ev(hit ? 'pass' : 'fail', hit ? `Email link found (${hit.raw})` : 'No mailto: link found')] };
+    });
+
+  A.registerCheck('backToTop',
+    { label: 'Back-to-top control', scopes: ['home', 'eachSubpage', 'eachPage'], params: [] },
+    ({ snapshot: s }) => {
+      const shortPage = s.docHeight <= s.viewport.h;
+      const hit = s.anchors.find(a => a.targetY !== null && a.targetY < 200 &&
+        (shortPage || a.y > s.docHeight * 0.4));
+      return { subResults: [sub('present', 'Back-to-top anchor', hit ? 1 : 0)],
+        evidence: [ev(hit ? 'pass' : 'fail', hit
+          ? `${s.path}: back-to-top control found ("${hit.text || hit.href}")`
+          : `${s.path}: no back-to-top control targeting the page top`)] };
+    });
+})();
+</script>
 <script id="module-spell"></script>
 <script id="module-config"></script>
 <script id="module-scoring"></script>
