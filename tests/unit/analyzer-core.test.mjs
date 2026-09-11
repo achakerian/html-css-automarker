@@ -29,6 +29,7 @@ test('core snapshot: nav, links, images, media, structure, text, anchors, inline
   assert.deepEqual(s.nav.linkTargets, ['about.html']);          // only pages that exist
   const gone = s.links.find(l => l.raw === 'gone.html');
   assert.equal(gone.internal, true); assert.equal(gone.targetExists, false);
+  assert.equal(typeof gone.y, 'number');
   assert.equal(s.links.find(l => l.raw.startsWith('https')).external, true);
   assert.equal(s.links.find(l => l.raw.startsWith('mailto')).mailto, true);
   const ok = s.images.find(i => i.raw === 'img/a.svg');
@@ -54,4 +55,38 @@ test('analyzeSubmission analyses every page and isolates failures', async () => 
   }, SITE);
   assert.deepEqual(Object.keys(r.snapshots).sort(), ['about.html', 'index.html']);
   assert.equal(r.snapshots['about.html'].error, undefined);
+});
+
+const TABLE_NAV_SITE = {
+  'index.html': `<html><body>
+    <table>
+      <tr><td><a href="a.html">A</a></td></tr>
+      <tr><td><a href="b.html">B</a></td></tr>
+      <tr><td><a href="c.html">C</a></td></tr>
+    </table>
+  </body></html>`,
+  'a.html': '<html><body><a href="index.html">back</a></body></html>',
+  'b.html': '<html><body><a href="index.html">back</a></body></html>',
+  'c.html': '<html><body><a href="index.html">back</a></body></html>'
+};
+
+test('nav fallback detects a multi-row table nav despite the implicit <tbody>', async () => {
+  const s = await snapshotFor(app.page, TABLE_NAV_SITE, 'index.html');
+  assert.deepEqual(s.nav.linkTargets, ['a.html', 'b.html', 'c.html']);
+});
+
+test('analyzeSubmission isolates a page whose analyzer hook throws', async () => {
+  const r = await app.page.evaluate(async site => {
+    const sub = await Automarker.submissionFromTexts('t', site);
+    const hook = (handle, snap) => { if (snap.path === 'about.html') throw new Error('hook boom'); };
+    Automarker.analyzerHooks.push(hook);
+    try {
+      return await Automarker.analyzeSubmission(sub);
+    } finally {
+      Automarker.analyzerHooks.pop();
+    }
+  }, SITE);
+  assert.deepEqual(r.snapshots['about.html'], { path: 'about.html', error: 'hook boom' });
+  assert.equal(r.snapshots['index.html'].error, undefined);
+  assert.equal(r.snapshots['index.html'].title, 'Home');
 });

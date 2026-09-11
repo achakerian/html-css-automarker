@@ -307,9 +307,9 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       let navEl = doc.querySelector('nav');
       if (!navEl) {
         let best = null, bestN = 1;
-        for (const c of doc.querySelectorAll('header, div, ul, p, table, tr')) {
+        for (const c of doc.querySelectorAll('header, div, ul, p, table, tbody, tr')) {
           if (yOf(c) > doc.documentElement.scrollHeight * 0.4) continue;
-          const n = [...c.querySelectorAll(':scope > a[href], :scope > li > a[href], :scope > td > a[href]')]
+          const n = [...c.querySelectorAll(':scope > a[href], :scope > li > a[href], :scope > td > a[href], :scope > tbody > tr > td > a[href], :scope > tr > td > a[href]')]
             .filter(a => { const real = resolveReal(a.getAttribute('href') || ''); return real && pageSet.has(real); }).length;
           if (n > bestN) { best = c; bestN = n; }
         }
@@ -345,7 +345,8 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
         const real = (!mailto && !external) ? resolveReal(raw) : null;
         const inNav = !!(navEl && navEl.contains(a));
         const link = { raw, resolved: real, internal: !mailto && !external,
-          external, mailto, targetExists: !!real, text: a.textContent.trim().slice(0, 80), inNav };
+          external, mailto, targetExists: !!real, text: a.textContent.trim().slice(0, 80), inNav,
+          y: Math.round(yOf(a)) };
         links.push(link);
         if (inNav && real && pageSet.has(real)) navLinkTargets.add(real);
       }
