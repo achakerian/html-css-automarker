@@ -10,7 +10,7 @@ after(async () => { await app.close(); });
 const NAV = `<nav style="background:#123;padding:8px">
   <a href="index.html" style="color:#fff;text-decoration:none;padding:6px">H</a>
   <a href="a.html" style="color:#fff;text-decoration:none;padding:6px">A</a></nav>`;
-const SITE = { 'index.html': `<html><body>${NAV}<p>Teh home page</p></body></html>`,
+const SITE = { 'index.html': `<html><body>${NAV}<p>the home page has a teh typo</p></body></html>`,
                'a.html': `<html><body>${NAV}<p>sub</p><a href="dead.html">x</a></body></html>` };
 const CFG = {
   meta: { id: 't', title: 't', totalPoints: 12, mappedMarks: 30, minPages: 3,
@@ -47,13 +47,8 @@ test('scores, expands, pads, deducts and maps', async () => {
   const broken = sheet.deductions.find(d => d.id === 'broken');
   assert.equal(broken.total, -2);                           // dead.html, auto-confirmed
   const spelling = sheet.deductions.find(d => d.id === 'spelling');
-  // "Teh" is the first word of the <p>, so it is capitalised; module-spell skips any
-  // token starting with an uppercase letter to avoid flagging proper nouns/acronyms
-  // (see tests/unit/spell.test.mjs, which asserts "Adidas"/"Nike"/"WIFI" are accepted).
-  // "home"/"page"/"sub" are dictionary words, so this fixture yields no instances —
-  // hand-verified directly against Automarker.checks.spelling.
-  assert.equal(spelling.instances.length, 0);
-  assert.equal(spelling.total, 0);                          // assisted: unconfirmed by default (and none found)
+  assert.ok(spelling.instances.some(i => i.word === 'teh'));
+  assert.equal(spelling.total, 0);                          // assisted: unconfirmed by default
   const short = sheet.deductions.find(d => d.id === 'short');
   assert.equal(short.total, -5);                            // 2 pages < minPages 3
   assert.equal(sheet.requirementsTotal, 1);
@@ -85,11 +80,8 @@ test('overrides and spelling confirmation recompute totals', async () => {
   assert.equal(r.afterOverride, r.before - 3);
   assert.equal(r.overridden, true);
   assert.equal(r.reqMet, 1);
-  // No spelling instance exists for this fixture (see the "teh"/capitalisation note in the
-  // previous test), so confirming index 0 is a no-op — setDeductionConfirmed guards on
-  // `d.instances[index]` existing — and the total is unchanged by the confirmation call.
-  assert.equal(r.spellTotal, 0);
-  assert.equal(r.total, r.afterOverride);
+  assert.equal(r.spellTotal, -1);
+  assert.equal(r.total, r.afterOverride - 1);
 });
 
 test('processSubmissionBytes runs the whole pipeline from zip bytes', async () => {
@@ -106,7 +98,11 @@ test('processSubmissionBytes runs the whole pipeline from zip bytes', async () =
 });
 
 test('corrupt zip yields an error record, not a crash', async () => {
-  const rec = await app.page.evaluate(async () =>
-    Automarker.processSubmissionBytes('bad', new Uint8Array([9, 9, 9])));
+  const rec = await app.page.evaluate(async () => {
+    const before = Automarker.state.records.length;
+    const r = await Automarker.processSubmissionBytes('bad', new Uint8Array([9, 9, 9]));
+    return { error: r.error, before, after: Automarker.state.records.length };
+  });
   assert.match(rec.error, /Not a zip/);
+  assert.equal(rec.after, rec.before + 1);              // pushed onto state.records even on failure
 });
