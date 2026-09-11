@@ -32,7 +32,64 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
   U.clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 })();
 </script>
-<script id="module-zip"></script>
+<script id="module-zip">
+(() => {
+  const A = Automarker;
+  async function inflateRaw(bytes) {
+    return new Uint8Array(await new Response(new Blob([bytes]).stream()
+      .pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+  }
+  function normalize(files) {
+    let out = new Map();
+    for (const [name, data] of files) {
+      const p = name.replace(/\\/g, '/').replace(/^\.\//, '');
+      const base = p.split('/').pop();
+      if (p.startsWith('__MACOSX/') || base === '.DS_Store' || base.startsWith('.')) continue;
+      out.set(p, data);
+    }
+    const roots = new Set([...out.keys()].map(p => p.split('/')[0]));
+    if (roots.size === 1 && [...out.keys()].length > 1 && [...out.keys()].every(p => p.includes('/'))) {
+      const strip = [...roots][0].length + 1;
+      out = new Map([...out.entries()].map(([p, d]) => [p.slice(strip), d]));
+    }
+    return out;
+  }
+  A.ZipReader = {
+    async read(input) {
+      const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      let eocd = -1;
+      for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 65536); i--) {
+        if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+      }
+      if (eocd < 0) throw new Error('Not a zip file (no end-of-central-directory record)');
+      const count = view.getUint16(eocd + 10, true);
+      let off = view.getUint32(eocd + 16, true);
+      const files = new Map();
+      for (let n = 0; n < count; n++) {
+        if (view.getUint32(off, true) !== 0x02014b50) throw new Error('Corrupt zip central directory');
+        const method = view.getUint16(off + 10, true);
+        const compSize = view.getUint32(off + 20, true);
+        const nameLen = view.getUint16(off + 28, true);
+        const extraLen = view.getUint16(off + 30, true);
+        const commentLen = view.getUint16(off + 32, true);
+        const localOff = view.getUint32(off + 42, true);
+        const name = new TextDecoder().decode(bytes.subarray(off + 46, off + 46 + nameLen));
+        off += 46 + nameLen + extraLen + commentLen;
+        if (name.endsWith('/')) continue;
+        const lNameLen = view.getUint16(localOff + 26, true);
+        const lExtraLen = view.getUint16(localOff + 28, true);
+        const start = localOff + 30 + lNameLen + lExtraLen;
+        const raw = bytes.subarray(start, start + compSize);
+        if (method === 0) files.set(name, raw.slice());
+        else if (method === 8) files.set(name, await inflateRaw(raw));
+        else throw new Error(`Unsupported zip compression method ${method} for ${name}`);
+      }
+      return normalize(files);
+    }
+  };
+})();
+</script>
 <script id="module-submission"></script>
 <script id="module-render"></script>
 <script id="module-analyze"></script>
