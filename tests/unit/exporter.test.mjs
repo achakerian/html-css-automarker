@@ -35,6 +35,19 @@ test('CSV has stable columns, quoting, totals and error rows', async () => {
   assert.match(r2, /broken-zip.*Not a zip file/);
 });
 
+test('CSV neutralises formula-injection-prone names', async () => {
+  const csv = await app.page.evaluate(async ({ site, cfg }) => {
+    const sub = await Automarker.submissionFromTexts('=SUM(A1:A9)', site);
+    const analysis = await Automarker.analyzeSubmission(sub);
+    const sheet = await Automarker.scoring.scoreSubmission({ submission: sub, ...analysis }, cfg);
+    return Automarker.exporter.toCSV([{ name: '=SUM(A1:A9)', sheet }], cfg);
+  }, { site: SITE, cfg: CFG });
+  const [, r1] = csv.trim().split('\n');
+  const firstCell = r1.split(',')[0];
+  assert.ok(!firstCell.startsWith('='), `first cell must not start with '=': ${firstCell}`);
+  assert.equal(firstCell, "'=SUM(A1:A9)");
+});
+
 test('feedback report contains labels, scores and evidence', async () => {
   const html = await app.page.evaluate(async ({ site, cfg }) => {
     const sub = await Automarker.submissionFromTexts('alice', site);

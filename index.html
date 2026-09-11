@@ -115,7 +115,7 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
     return out;
   }
   A.ZipReader = {
-    async read(input) {
+    async read(input, { maxBytes = 200 * 1024 * 1024 } = {}) {
       const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
       const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
       let eocd = -1;
@@ -126,6 +126,7 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       const count = view.getUint16(eocd + 10, true);
       let off = view.getUint32(eocd + 16, true);
       const files = new Map();
+      let totalBytes = 0;
       try {
         for (let n = 0; n < count; n++) {
           if (view.getUint32(off, true) !== 0x02014b50) throw new Error('Corrupt zip central directory');
@@ -142,9 +143,15 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
           const lExtraLen = view.getUint16(localOff + 28, true);
           const start = localOff + 30 + lNameLen + lExtraLen;
           const raw = bytes.subarray(start, start + compSize);
-          if (method === 0) files.set(name, raw.slice());
-          else if (method === 8) files.set(name, await inflateRaw(raw));
+          let data;
+          if (method === 0) data = raw.slice();
+          else if (method === 8) data = await inflateRaw(raw);
           else throw new Error(`Unsupported zip compression method ${method} for ${name}`);
+          totalBytes += data.length;
+          // Guards against zip bombs: a tiny compressed archive that expands to
+          // an unreasonable amount of memory before we ever look at its contents.
+          if (totalBytes > maxBytes) throw new Error('Zip expands beyond the size limit');
+          files.set(name, data);
         }
       } catch (e) {
         if (e instanceof RangeError) throw new Error('Corrupt zip central directory');
@@ -256,14 +263,35 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
         { type: MIME[ext] || 'application/octet-stream' }));
       blobs.push(u); return u;
     };
-    const rewriteCss = (text, fromPath) => text.replace(
-      /url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (m, q, u) => {
-        if (/^data:/i.test(u)) return m;
-        if (isExternal(u)) { externalRefs.push({ kind: 'css-url', url: u }); return `url(${PLACEHOLDER})`; }
-        const real = lookup(fromPath, u);
-        if (!real) { brokenAssets.push({ kind: 'css-url', url: u }); return m; }
-        return `url(${blobFor(real)})`;
-      });
+    const rewriteCss = (text, fromPath, depth = 0) => {
+      // @import (string or url() form, with an optional trailing media list) first —
+      // it may inject fresh blob: URLs that the url() pass below must leave alone.
+      const withImports = text.replace(
+        /@import\s+(?:url\(\s*(['"]?)([^'")]+)\1\s*\)|(['"])([^'"]*)\3)\s*[^;]*;/gi,
+        (m, uq, uUrl, sq, sUrl) => {
+          const u = (uUrl !== undefined ? uUrl : sUrl).trim();
+          if (isExternal(u)) { externalRefs.push({ kind: 'css-import', url: u }); return ''; }
+          const real = lookup(fromPath, u);
+          // Only one level of @import nesting is resolved; anything deeper (or
+          // missing) is treated as unresolvable rather than recursed into.
+          if (!real || depth >= 1) { brokenAssets.push({ kind: 'css-import', url: u }); return ''; }
+          referenced.add(real);
+          const importedText = U.decodeText(submission.files.get(real));
+          cssSources.push({ origin: 'external', path: real, text: importedText });
+          const rewritten = rewriteCss(importedText, real, depth + 1);
+          const nestedUrl = URL.createObjectURL(new Blob([rewritten], { type: 'text/css' }));
+          blobs.push(nestedUrl);
+          return `@import url(${nestedUrl});`;
+        });
+      return withImports.replace(
+        /url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (m, q, u) => {
+          if (/^(data|blob):/i.test(u)) return m;
+          if (isExternal(u)) { externalRefs.push({ kind: 'css-url', url: u }); return `url(${PLACEHOLDER})`; }
+          const real = lookup(fromPath, u);
+          if (!real) { brokenAssets.push({ kind: 'css-url', url: u }); return m; }
+          return `url(${blobFor(real)})`;
+        });
+    };
 
     const doc = new DOMParser().parseFromString(
       U.decodeText(submission.files.get(path)), 'text/html');
@@ -272,7 +300,13 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
     for (const link of [...doc.querySelectorAll('link[href]')]) {
       const rel = (link.getAttribute('rel') || '').toLowerCase();
       const href = link.getAttribute('href') || '';
-      if (!rel.includes('stylesheet') && !rel.includes('icon')) continue;
+      if (!rel.includes('stylesheet') && !rel.includes('icon')) {
+        // preload/prefetch/preconnect/dns-prefetch/modulepreload/… — never needed
+        // for a static render and, if external, would otherwise hint the iframe to fetch.
+        if (isExternal(href)) externalRefs.push({ kind: 'link', url: href });
+        link.remove();
+        continue;
+      }
       if (isExternal(href)) { externalRefs.push({ kind: 'css', url: href }); link.remove(); continue; }
       const real = lookup(path, href);
       if (!real) { brokenAssets.push({ kind: 'css', url: href }); link.remove(); continue; }
@@ -289,11 +323,20 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       cssSources.push({ origin: 'embedded', path, text: st.textContent });
       st.textContent = rewriteCss(st.textContent, path);
     });
+    for (const el of [...doc.querySelectorAll('img[srcset], source[srcset]')]) {
+      // srcset can carry an external URL even when src/no src is present at all —
+      // strip it unconditionally so the browser never picks a candidate to fetch.
+      const srcset = el.getAttribute('srcset') || '';
+      const candidates = srcset.split(',').map(c => c.trim().split(/\s+/)[0]).filter(Boolean);
+      const ext = candidates.find(isExternal);
+      if (ext) externalRefs.push({ kind: 'img', url: ext });
+      el.removeAttribute('srcset');
+    }
     for (const el of [...doc.querySelectorAll('img[src], video[src], audio[src], source[src], video[poster]')]) {
       for (const attr of ['src', 'poster']) {
         const raw = el.getAttribute(attr); if (!raw) continue;
         const kind = el.tagName === 'IMG' ? 'img' : 'media';
-        el.setAttribute('data-am-raw', raw); el.removeAttribute('srcset');
+        el.setAttribute('data-am-raw', raw);
         if (/^data:/i.test(raw)) continue;
         if (isExternal(raw)) { externalRefs.push({ kind, url: raw });
           el.setAttribute('data-am-external', '1');
@@ -1581,7 +1624,10 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
 <script id="module-export">
 (() => {
   const A = Automarker;
-  const q = v => { const s = String(v ?? '');
+  const q = v => { let s = String(v ?? '');
+    // Neutralise CSV formula injection: a leading =, +, - or @ makes Excel/Sheets
+    // treat the cell as a formula when the file is reopened.
+    if (/^[=+\-@]/.test(s)) s = `'${s}`;
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
@@ -1726,8 +1772,15 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
     const prog = $('#progress');
     for (let i = 0; i < files.length; i++) {
       prog.textContent = `Marking ${i + 1}/${files.length}: ${files[i].name}…`;
-      const bytes = new Uint8Array(await files[i].arrayBuffer());
-      await A.processSubmissionBytes(files[i].name.replace(/\.zip$/i, ''), bytes);
+      const name = files[i].name.replace(/\.zip$/i, '');
+      try {
+        const bytes = new Uint8Array(await files[i].arrayBuffer());
+        await A.processSubmissionBytes(name, bytes);
+      } catch (e) {
+        // A single unreadable file (bad File handle, unexpected throw, …) must not
+        // abort the rest of the batch — record it as an error row and keep going.
+        A.state.records.push({ name, error: String(e.message || e) });
+      }
       if (activeIdx < 0) activeIdx = 0;
       renderAll();
     }
@@ -1913,6 +1966,7 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
     cfg.meta.title = cfg.meta.title.endsWith(' (custom)') ? cfg.meta.title : cfg.meta.title + ' (custom)';
     A.presets[cfg.meta.id] = cfg;
     A.state.config = cfg; A.state.records = []; activeIdx = -1;
+    closePreview();                                // don't leak the open preview iframe/blob URLs
     init();                                       // rebuild header so the select includes the new entry
     $('[data-testid="rubric-select"]').value = cfg.meta.id;
     $('#builder-modal').hidden = true;

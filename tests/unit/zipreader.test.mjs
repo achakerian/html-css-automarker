@@ -57,6 +57,15 @@ test('rejects corrupt central directory', async () => {
     /Corrupt/);
 });
 
+test('rejects zips that expand beyond a configured size limit', async () => {
+  const buf = buildZip([{ path: 'big.bin', data: Buffer.alloc(5000) }]);
+  await assert.rejects(
+    app.page.evaluate(async b64 =>
+      Automarker.ZipReader.read(Automarker.util.b64ToBytes(b64), { maxBytes: 1000 }),
+      buf.toString('base64')),
+    /size limit/);
+});
+
 test('rejects unsupported compression method', async () => {
   const buf = buildZip([{ path: 'test.txt', data: 'hello' }]);
   const corrupted = Buffer.from(buf);
