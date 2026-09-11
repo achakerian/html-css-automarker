@@ -1173,7 +1173,189 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
   };
 })();
 </script>
-<script id="module-config"></script>
+<script id="module-config">
+(() => {
+  const A = Automarker;
+  A.presets['cse1iit-2026s2'] = {
+    meta: { id: 'cse1iit-2026s2', title: 'CSE1IIT — La Trobe Sports website (2026 S2)',
+      totalPoints: 113, mappedMarks: 30, minPages: 6,
+      viewport: { w: 1280, h: 800 }, responsiveWidths: [1280, 768, 375],
+      weightThresholds: { fullKB: 1536, partialKB: 4096 } },
+    topic: {
+      keywords: ['sport', 'sports', 'sportswear', 'shoes', 'footwear', 'fitness', 'gym',
+        'training', 'athletic', 'gear', 'equipment', 'apparel', 'running', 'basketball',
+        'football', 'soccer', 'hiking', 'accessories', 'store'],
+      sectionHints: ['products', 'brands', 'reservation', 'contact', 'about', 'promotions',
+        'arrivals', 'discounts', 'sale', 'offers'],
+      spellWhitelist: ['sportswear', 'activewear', 'ecommerce', 'sneakers'],
+      logoHints: ['logo', 'brand'],
+      locationHints: ['location', 'contact', 'visit', 'find', 'store', 'directions'] },
+    sections: [
+      { id: 'nav', title: 'Navigation Bar and Links', points: 30, items: [
+        { id: 'nav-home', label: 'Nav bar on home page, styled, linking to each sub-page',
+          check: 'navBar', mode: 'auto', scope: 'home', max: 5 },
+        { id: 'nav-sub', label: 'Nav bar consistent on sub-page, linking home + other sub-pages',
+          check: 'navBar', mode: 'auto', scope: 'eachSubpage', max: 5 } ] },
+      { id: 'home', title: 'Home Page Design', points: 23, items: [
+        { id: 'home-colour', label: 'Colour theme suits the brand', check: 'colourTheme', mode: 'auto', scope: 'home', max: 2 },
+        { id: 'home-text', label: 'Suitable fonts and text colours', check: 'typography', mode: 'auto', scope: 'home', max: 2 },
+        { id: 'home-layout', label: 'Balanced layout with white space', check: 'whiteSpace', mode: 'auto', scope: 'home', max: 2 },
+        { id: 'home-sections', label: 'Clear sections', check: 'sectionStructure', mode: 'auto', scope: 'home', max: 2 },
+        { id: 'home-image', label: 'At least one relevant, well-sized image', check: 'images', mode: 'auto', scope: 'home', max: 2, params: { min: 1 } },
+        { id: 'home-margins', label: 'Appropriate margins', check: 'margins', mode: 'auto', scope: 'home', max: 2 },
+        { id: 'home-logo', label: 'Logo displayed (ideally top-left, linking home)', check: 'logo', mode: 'auto', scope: 'home', max: 2 },
+        { id: 'home-weight', label: 'Page not too heavy; loads quickly', check: 'pageWeight', mode: 'auto', scope: 'home', max: 2 },
+        { id: 'home-aesthetic', label: 'Professional, attractive presentation', check: 'aesthetic', mode: 'assisted', scope: 'home', max: 2 },
+        { id: 'home-intro', label: 'Useful introductory information', check: 'contentIntro', mode: 'assisted', scope: 'home', max: 2, params: { min: 50 } },
+        { id: 'home-offerings', label: 'Key offerings highlighted with encouragement to explore', check: 'offerings', mode: 'assisted', scope: 'home', max: 2 },
+        { id: 'home-backtotop', label: 'Back-to-top button', check: 'backToTop', mode: 'auto', scope: 'home', max: 1 } ] },
+      { id: 'subs', title: 'Design and Presentation of the 5 Sub-Pages', points: 60, items: [
+        { id: 'sub-colour', label: 'Good colour blending, consistent design', check: 'colourTheme', mode: 'auto', scope: 'subpages', max: 5, params: { consistency: true } },
+        { id: 'sub-text', label: 'Readable text size and colour', check: 'typography', mode: 'auto', scope: 'subpages', max: 5 },
+        { id: 'sub-layout', label: 'Clear balanced layout with white space', check: 'whiteSpace', mode: 'auto', scope: 'subpages', max: 5 },
+        { id: 'sub-sections', label: 'Pages divided into clear sections', check: 'sectionStructure', mode: 'auto', scope: 'subpages', max: 5 },
+        { id: 'sub-images', label: 'At least two relevant images per sub-page', check: 'images', mode: 'auto', scope: 'subpages', max: 10, params: { min: 2 } },
+        { id: 'sub-margins', label: 'Appropriate margins', check: 'margins', mode: 'auto', scope: 'subpages', max: 5 },
+        { id: 'sub-logo', label: 'Logo on each page, hyperlinked back to home', check: 'logo', mode: 'auto', scope: 'subpages', max: 5, params: { requireLink: true } },
+        { id: 'sub-weight', label: 'Pages optimised for fast loading', check: 'pageWeight', mode: 'auto', scope: 'subpages', max: 5 },
+        { id: 'sub-content', label: 'Useful, audience-relevant content', check: 'contentRelevance', mode: 'assisted', scope: 'subpages', max: 5, params: { min: 40 } },
+        { id: 'sub-backtotop', label: 'Back-to-top button on each sub-page', check: 'backToTop', mode: 'auto', scope: 'subpages', max: 5 },
+        { id: 'sub-directions', label: 'Clear directions on the location page', check: 'directions', mode: 'auto', scope: 'site', max: 5 } ] } ],
+    deductions: [
+      { id: 'spelling', label: 'Spelling mistakes (−1 each, confirm before applying)',
+        perInstance: -1, check: 'spelling', mode: 'assisted' },
+      { id: 'broken', label: 'Broken links / images (−2 each)',
+        perInstance: -2, check: 'brokenResources', mode: 'auto' },
+      { id: 'absolute', label: 'Absolute or external links (must be relative; −2 each)',
+        perInstance: -2, check: 'externalLink', mode: 'auto', params: { policy: 'forbidden' } },
+      { id: 'pagecount', label: 'Fewer than 6 pages (−15)',
+        flat: -15, check: 'pageCount', mode: 'auto' } ]
+  };
+
+  A.presets['iwbs001-a2'] = {
+    meta: { id: 'iwbs001-a2', title: 'IWBS001 — Assignment 2 personal portfolio (HTML & CSS)',
+      minPages: 3, viewport: { w: 1280, h: 800 }, responsiveWidths: [1280, 768, 375],
+      weightThresholds: { fullKB: 3072, partialKB: 8192 } },
+    topic: { keywords: ['skills', 'hobbies', 'favourite', 'about', 'portfolio'],
+      sectionHints: ['skills', 'hobbies', 'education', 'background', 'fun facts'],
+      spellWhitelist: [], logoHints: ['logo', 'photo', 'profile'],
+      locationHints: ['place', 'city', 'town'] },
+    sections: [
+      { id: 'structure', title: 'Pages and Navigation', items: [
+        { id: 'pages-3', label: '3 pages: home, favourite things & activities, favourite place',
+          check: 'pageCount', mode: 'auto', scope: 'site', required: true, params: { min: 3 } },
+        { id: 'nav-each', label: 'Navigation bar on every page linking to the other pages',
+          check: 'navBar', mode: 'auto', scope: 'eachPage', required: true, params: { threshold: 0.7 } } ] },
+      { id: 'content', title: 'Content Requirements', items: [
+        { id: 'home-media', label: 'Celebrity quote with embedded video, GIF or clip',
+          check: 'mediaPresence', mode: 'auto', scope: 'home', required: true,
+          params: { anyOf: true, require: [{ kind: 'video', min: 1 }, { kind: 'gif', min: 1 }, { kind: 'iframe', min: 1 }] } },
+        { id: 'home-email', label: 'Hyperlink to your email address', check: 'emailLink',
+          mode: 'auto', scope: 'home', required: true },
+        { id: 'home-photo', label: 'Photo, name and student ID shown (confirm visually)',
+          check: 'images', mode: 'assisted', scope: 'home', required: true,
+          params: { min: 1, relevance: false, threshold: 0.5 } },
+        { id: 'home-words', label: 'Introduction, fun facts and skills text (≈600+ words total)',
+          check: 'wordCount', mode: 'auto', scope: 'home', required: true, params: { min: 600 } },
+        { id: 'sub-words', label: 'Two 250-word descriptions per sub-page (≈500+ words)',
+          check: 'wordCount', mode: 'auto', scope: 'eachSubpage', required: true, params: { min: 500 } },
+        { id: 'ext-links', label: 'External reference link on every page',
+          check: 'externalLink', mode: 'auto', scope: 'eachPage', required: true,
+          params: { policy: 'required', min: 1 } } ] },
+      { id: 'css', title: 'Minimum CSS Requirements', items: [
+        { id: 'css-external', label: 'External CSS file linked to all pages',
+          check: 'cssExternal', mode: 'auto', scope: 'site', required: true, params: { threshold: 0.99 } },
+        { id: 'css-ext-types', label: 'External CSS: p style, 3 generic classes, 3 tag classes, 3 heading styles, a:hover, 2 group styles, contextual, button, flexbox',
+          check: 'cssSelectorTypes', mode: 'auto', scope: 'site', required: true,
+          params: { threshold: 0.99, requirements: [
+            { kind: 'pFormat', min: 1, origin: 'external' },
+            { kind: 'classGeneric', min: 3, origin: 'external' },
+            { kind: 'classScoped', min: 3, origin: 'external' },
+            { kind: 'headingStyle', min: 3, origin: 'external' },
+            { kind: 'hoverAnchor', min: 1, origin: 'external' },
+            { kind: 'group', min: 2, origin: 'external' },
+            { kind: 'contextual', min: 1, origin: 'external' },
+            { kind: 'buttonStyle', min: 1, origin: 'external' },
+            { kind: 'flexbox', min: 1, origin: 'external' } ] } },
+        { id: 'css-emb-types', label: 'Embedded style: id on heading, contextual, p class, positioning, header+footer+body styles',
+          check: 'cssSelectorTypes', mode: 'auto', scope: 'site', required: true,
+          params: { threshold: 0.99, requirements: [
+            { kind: 'idOnHeading', min: 1, origin: 'embedded' },
+            { kind: 'contextual', min: 1, origin: 'embedded' },
+            { kind: 'classScoped', min: 1, origin: 'embedded' },
+            { kind: 'positioning', min: 1, origin: 'embedded' },
+            { kind: 'headerStyle', min: 1, origin: 'embedded' },
+            { kind: 'footerStyle', min: 1, origin: 'embedded' },
+            { kind: 'bodyStyle', min: 1, origin: 'embedded' } ] } },
+        { id: 'css-inline', label: '≥3 inline styles per page, incl. one div and one span',
+          check: 'inlineStyles', mode: 'auto', scope: 'eachPage', required: true,
+          params: { min: 3, requireTags: ['div', 'span'], threshold: 0.99 } },
+        { id: 'css-unused', label: 'No unused CSS selectors',
+          check: 'cssUnused', mode: 'auto', scope: 'site', required: true, params: { threshold: 0.99 } } ] },
+      { id: 'design', title: 'Layout and Design Quality', items: [
+        { id: 'design-consistent', label: 'Consistent colours/design across pages',
+          check: 'colourTheme', mode: 'assisted', scope: 'home', required: true,
+          params: { consistency: true, threshold: 0.6 } },
+        { id: 'design-typography', label: 'High contrast, readable fonts and sizes',
+          check: 'typography', mode: 'assisted', scope: 'home', required: true, params: { threshold: 0.6 } },
+        { id: 'design-responsive', label: 'Website adapts to window sizes',
+          check: 'responsive', mode: 'auto', scope: 'eachPage', required: true, params: { threshold: 0.6 } },
+        { id: 'design-structure', label: 'Clear purpose and sections on each page',
+          check: 'sectionStructure', mode: 'assisted', scope: 'eachPage', required: true, params: { threshold: 0.5 } } ] } ],
+    deductions: [
+      { id: 'spelling', label: 'Spelling/grammar issues (confirm each)',
+        perInstance: -1, check: 'spelling', mode: 'assisted' } ]
+  };
+
+  const SCOPES = ['home', 'eachSubpage', 'subpages', 'eachPage', 'site'];
+  A.Config = {
+    expandedSectionPoints(section, meta) {
+      let pts = 0;
+      for (const it of section.items) {
+        if (!it.max) continue;
+        if (it.scope === 'eachSubpage') pts += it.max * ((meta.minPages ?? 1) - 1);
+        else if (it.scope === 'eachPage') pts += it.max * (meta.minPages ?? 1);
+        else pts += it.max;
+      }
+      return pts;
+    },
+    validate(config) {
+      const errs = [];
+      if (!config?.meta?.id || !config?.meta?.title) errs.push('meta.id and meta.title are required');
+      const seen = new Set();
+      for (const sec of config.sections ?? []) {
+        for (const it of sec.items ?? []) {
+          if (!it.id || !it.label) errs.push(`item in ${sec.id}: id and label required`);
+          if (seen.has(it.id)) errs.push(`duplicate item id "${it.id}"`);
+          seen.add(it.id);
+          if (!A.checks[it.check]) errs.push(`item "${it.id}": unknown check "${it.check}"`);
+          if (!SCOPES.includes(it.scope)) errs.push(`item "${it.id}": invalid scope "${it.scope}"`);
+          const scored = typeof it.max === 'number' && it.max > 0;
+          if (scored === !!it.required)
+            errs.push(`item "${it.id}": exactly one of max or required:true`);
+        }
+        if (typeof sec.points === 'number') {
+          const got = A.Config.expandedSectionPoints(sec, config.meta ?? {});
+          if (got !== sec.points) errs.push(`section "${sec.id}": points ${sec.points} but items expand to ${got}`);
+        }
+      }
+      for (const d of config.deductions ?? []) {
+        if (!A.checks[d.check]) errs.push(`deduction "${d.id}": unknown check "${d.check}"`);
+        if (typeof d.perInstance !== 'number' && typeof d.flat !== 'number')
+          errs.push(`deduction "${d.id}": needs perInstance or flat`);
+      }
+      if (typeof config.meta?.totalPoints === 'number') {
+        const sum = (config.sections ?? []).reduce((a, s) =>
+          a + A.Config.expandedSectionPoints(s, config.meta), 0);
+        if (sum !== config.meta.totalPoints)
+          errs.push(`meta.totalPoints ${config.meta.totalPoints} but sections sum to ${sum} points`);
+      }
+      return errs;
+    }
+  };
+  A.state.config = A.presets['cse1iit-2026s2'];
+})();
+</script>
 <script id="module-scoring"></script>
 <script id="module-export"></script>
 <script id="module-ui"></script>
