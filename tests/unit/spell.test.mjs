@@ -20,3 +20,12 @@ test('flags misspellings, accepts inflections, capitals and whitelist', async ()
   const words = out.map(o => o.word).sort();
   assert.deepEqual(words, ['definately', 'teh']);
 });
+
+test('skips contractions (straight and curly apostrophes), still catches real misspellings', async () => {
+  const out = await app.page.evaluate(async () => Automarker.spell.check(
+    'It is not very good; we\'re sad the item wasn’t right and the shoes don\'t fit well. ' +
+    'Sizing was definately bad.',
+    {}));
+  const words = out.map(o => o.word).sort();
+  assert.deepEqual(words, ['definately']);
+});

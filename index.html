@@ -1140,10 +1140,21 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
     }
     return v;
   };
+  const CONTRACTIONS = new Set([
+    "don't", "doesn't", "didn't", "isn't", "wasn't", "aren't", "weren't",
+    "can't", "cannot", "won't", "wouldn't", "couldn't", "shouldn't",
+    "hasn't", "haven't", "hadn't", "mustn't", "needn't",
+    "it's", "that's", "there's", "here's", "what's", "who's", "let's",
+    "we're", "they're", "you're",
+    "i'm", "i've", "we've", "you've", "they've",
+    "i'll", "we'll", "you'll", "they'll", "he'll", "she'll", "it'll",
+    "i'd", "we'd", "you'd", "they'd", "he'd", "she'd"
+  ]);
   A.spell = {
     ready: () => (loading ??= load()),
     wordCount: () => words ? words.size : 0,
     async check(text, config) {
+      text = text.replace(/[‘’ʼ]/g, "'");
       await A.spell.ready();
       if (!words.size) return [];
       const white = new Set((config?.topic?.spellWhitelist ?? []).map(w => w.toLowerCase()));
@@ -1152,6 +1163,7 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
         const tok = m[0].replace(/^'+|'+$/g, '');
         if (tok.length < 3 || /^[A-Z]/.test(tok) || /[A-Z]/.test(tok.slice(1))) continue;
         const w = tok.toLowerCase();
+        if (CONTRACTIONS.has(w)) continue;
         if (white.has(w)) continue;
         if (variants(w).some(v => words.has(v) || white.has(v))) continue;
         seen.set(w, (seen.get(w) || 0) + 1);
