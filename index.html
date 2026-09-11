@@ -1356,7 +1356,168 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
   A.state.config = A.presets['cse1iit-2026s2'];
 })();
 </script>
-<script id="module-scoring"></script>
+<script id="module-scoring">
+(() => {
+  const A = Automarker, U = A.util;
+  const fractionOf = res => { const w = res.subResults.reduce((a, s) => a + s.weight, 0);
+    return w ? res.subResults.reduce((a, s) => a + s.pass * s.weight, 0) / w : 0; };
+
+  async function runOn(item, snapshot, snapshots, submission, config) {
+    const ctx = { snapshot, snapshots, submission, config, params: item.params ?? {} };
+    const res = await A.checks[item.check](ctx);
+    return { fraction: fractionOf(res), evidence: res.evidence,
+      needsReview: !!res.needsReview || item.mode === 'assisted' || !!snapshot?.timedOut,
+      instances: res.instances ?? [] };
+  }
+  const toScore = (item, fraction) => item.max
+    ? U.clamp(Math.round(fraction * item.max), 0, item.max)
+    : (fraction >= (item.params?.threshold ?? 1) - 1e-9 ? 1 : 0);
+
+  A.scoring = {
+    async scoreSubmission({ submission, snapshots }, config) {
+      const meta = config.meta, items = [];
+      const subPages = submission.subPagePaths.filter(p => snapshots[p] && !snapshots[p].error);
+      const allPages = submission.pages.map(p => p.path).filter(p => snapshots[p] && !snapshots[p].error);
+      const home = snapshots[submission.homePath];
+
+      const mkRow = (item, sectionId, extra) => ({ id: item.id, sectionId, label: item.label,
+        mode: item.mode ?? 'auto', scope: item.scope, check: item.check,
+        max: item.max, required: item.required, overridden: false,
+        auto: 0, final: 0, passed: undefined, needsReview: item.mode === 'assisted',
+        evidence: [], ...extra });
+
+      for (const sec of config.sections) {
+        for (const item of sec.items) {
+          if (item.scope === 'home' || item.scope === 'site') {
+            const snap = item.scope === 'home' ? home : undefined;
+            const row = mkRow(item, sec.id, {});
+            if (item.scope === 'home' && (!snap || snap.error)) {
+              row.needsReview = true;
+              row.evidence = [{ level: 'fail', text: 'Could not analyse the home page' }];
+            } else {
+              const r = await runOn(item, snap, snapshots, submission, config);
+              row.auto = toScore(item, r.fraction); row.needsReview = row.needsReview || r.needsReview;
+              row.evidence = r.evidence;
+            }
+            row.final = row.auto;
+            if (item.required) row.passed = row.auto === 1;
+            items.push(row);
+          } else if (item.scope === 'eachSubpage' || item.scope === 'eachPage') {
+            const pool = item.scope === 'eachPage' ? allPages : subPages;
+            const want = item.scope === 'eachPage' ? (meta.minPages ?? pool.length)
+                                                   : (meta.minPages ?? pool.length + 1) - 1;
+            const runs = [];
+            for (const p of pool) runs.push({ path: p,
+              ...(await runOn(item, snapshots[p], snapshots, submission, config)) });
+            runs.sort((a, b) => b.fraction - a.fraction ||
+              pool.indexOf(a.path) - pool.indexOf(b.path));
+            const kept = runs.slice(0, want);
+            while (kept.length < want) kept.push({ path: null, fraction: 0,
+              evidence: [{ level: 'fail', text: `Required page missing` }], needsReview: false });
+            kept.forEach((r, k) => {
+              const row = mkRow(item, sec.id, {
+                id: `${item.id}#${k + 1}`,
+                label: `${item.label} — ${r.path ?? `missing page ${k + 1}`}` });
+              row.auto = row.final = r.path ? toScore(item, r.fraction) : 0;
+              row.needsReview = row.needsReview || !!r.needsReview;
+              row.evidence = r.evidence;
+              if (item.required) row.passed = r.path ? row.auto === 1 : false;
+              items.push(row);
+            });
+          } else { // subpages aggregate
+            const runs = [];
+            for (const p of subPages) runs.push({ path: p,
+              ...(await runOn(item, snapshots[p], snapshots, submission, config)) });
+            runs.sort((a, b) => b.fraction - a.fraction);
+            const want = (meta.minPages ?? subPages.length + 1) - 1;
+            const kept = runs.slice(0, want);
+            const denom = Math.max(want, kept.length) || 1;
+            const fraction = kept.reduce((a, r) => a + r.fraction, 0) / denom;
+            const row = mkRow(item, sec.id, {
+              perPage: kept.map(r => ({ path: r.path,
+                score: item.max ? U.clamp(Math.round(r.fraction * item.max), 0, item.max) : +(r.fraction.toFixed(2)),
+                evidence: r.evidence })) });
+            row.auto = row.final = toScore(item, fraction);
+            row.needsReview = row.needsReview || kept.some(r => r.needsReview);
+            row.evidence = kept.flatMap(r => r.evidence);
+            if (item.required) row.passed = row.auto === 1;
+            items.push(row);
+          }
+        }
+      }
+
+      const deductions = [];
+      for (const d of config.deductions ?? []) {
+        const res = await A.checks[d.check]({ snapshots, submission, config, params: d.params ?? {} });
+        const instances = (res.instances ?? []).map(i => ({ ...i,
+          confirmed: d.mode !== 'assisted',
+          points: d.perInstance ?? 0 }));
+        deductions.push({ id: d.id, label: d.label, perInstance: d.perInstance,
+          flat: d.flat, mode: d.mode ?? 'auto', instances, total: 0 });
+      }
+
+      const sheet = { configId: meta.id, items,
+        sections: config.sections.map(s => ({ id: s.id, title: s.title, points: s.points ?? null,
+          score: 0, reqTotal: 0, reqMet: 0 })),
+        deductions, totalPoints: meta.totalPoints ?? null, total: 0,
+        mappedMark: null, requirementsTotal: 0, requirementsMet: 0 };
+      A.scoring.recomputeTotals(sheet, config);
+      return sheet;
+    },
+
+    recomputeTotals(sheet, config) {
+      for (const sec of sheet.sections) {
+        const rows = sheet.items.filter(i => i.sectionId === sec.id);
+        sec.score = rows.reduce((a, i) => a + (i.max ? i.final : 0), 0);
+        sec.reqTotal = rows.filter(i => i.required).length;
+        sec.reqMet = rows.filter(i => i.required && i.passed).length;
+      }
+      for (const d of sheet.deductions)
+        d.total = typeof d.flat === 'number'
+          ? (d.instances.length ? d.flat : 0)
+          : d.instances.reduce((a, i) => a + (i.confirmed ? i.points : 0), 0);
+      const scored = sheet.items.reduce((a, i) => a + (i.max ? i.final : 0), 0);
+      const ded = sheet.deductions.reduce((a, d) => a + d.total, 0);
+      sheet.total = Math.max(0, scored + ded);
+      sheet.requirementsTotal = sheet.sections.reduce((a, s) => a + s.reqTotal, 0);
+      sheet.requirementsMet = sheet.sections.reduce((a, s) => a + s.reqMet, 0);
+      const m = config.meta;
+      sheet.mappedMark = (m.mappedMarks && m.totalPoints)
+        ? Math.max(0, A.util.round1(sheet.total / m.totalPoints * m.mappedMarks)) : null;
+    },
+
+    applyOverride(sheet, config, rowId, value) {
+      const row = sheet.items.find(i => i.id === rowId);
+      if (!row) return;
+      if (row.required) { row.passed = !!value; row.final = value ? 1 : 0; }
+      else row.final = A.util.clamp(Math.round(value), 0, row.max);
+      row.overridden = true;
+      A.scoring.recomputeTotals(sheet, config);
+    },
+
+    setDeductionConfirmed(sheet, config, dedId, index, confirmed) {
+      const d = sheet.deductions.find(x => x.id === dedId);
+      if (d && d.instances[index]) d.instances[index].confirmed = confirmed;
+      A.scoring.recomputeTotals(sheet, config);
+    }
+  };
+
+  A.processSubmissionBytes = async (name, bytes, config = A.state.config) => {
+    let record;
+    try {
+      if (bytes.length > 50 * 1024 * 1024)
+        throw new Error(`Zip is ${Math.round(bytes.length / 1048576)} MB — over the 50 MB guard`);
+      const submission = await A.loadSubmission(name, bytes);
+      const { snapshots } = await A.analyzeSubmission(submission,
+        { viewport: config.meta.viewport, responsiveWidths: config.meta.responsiveWidths });
+      const sheet = await A.scoring.scoreSubmission({ submission, snapshots }, config);
+      record = { name, submission, snapshots, sheet };
+    } catch (e) { record = { name, error: String(e.message || e) }; }
+    A.state.records.push(record);
+    return record;
+  };
+})();
+</script>
 <script id="module-export"></script>
 <script id="module-ui"></script>
 <script id="module-wordlist">
