@@ -95,7 +95,65 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
   };
 })();
 </script>
-<script id="module-submission"></script>
+<script id="module-submission">
+(() => {
+  const A = Automarker, U = A.util;
+
+  A.resolvePath = (fromPath, url) => {
+    if (!url) return null;
+    const u = url.trim();
+    if (/^([a-z][a-z0-9+.-]*:|\/\/|#)/i.test(u)) return null;   // scheme, protocol-relative, hash
+    if (/^[a-z]:[\\/]/i.test(u) || u.startsWith('/')) return null; // drive or root-absolute
+    let clean; try { clean = decodeURIComponent(u.split(/[?#]/)[0]); } catch { clean = u.split(/[?#]/)[0]; }
+    if (!clean) return null;
+    const parts = fromPath.replace(/\\/g, '/').split('/').slice(0, -1);
+    for (const seg of clean.replace(/\\/g, '/').split('/')) {
+      if (seg === '' || seg === '.') continue;
+      else if (seg === '..') { if (parts.length === 0) return null; parts.pop(); }
+      else parts.push(seg);
+    }
+    return parts.join('/');
+  };
+
+  function build(name, files) {
+    const lowerIndex = new Map();
+    for (const p of files.keys()) lowerIndex.set(p.toLowerCase(), p);
+    const errors = [];
+    const pagePaths = [...files.keys()].filter(p => /\.html?$/i.test(p))
+      .sort((a, b) => a.localeCompare(b));
+    const pages = pagePaths.map(path => ({ path, html: U.decodeText(files.get(path)) }));
+    if (pages.length === 0) errors.push('No HTML pages found in this submission.');
+
+    let homePath = null;
+    const indexes = pagePaths.filter(p => /(^|\/)index\.html?$/i.test(p))
+      .sort((a, b) => a.split('/').length - b.split('/').length);
+    if (indexes.length) homePath = indexes[0];
+    else if (pages.length) {
+      const inbound = new Map(pagePaths.map(p => [p, 0]));
+      for (const pg of pages) {
+        for (const m of pg.html.matchAll(/href\s*=\s*["']([^"']+)["']/gi)) {
+          const t = A.resolvePath(pg.path, m[1]);
+          const real = t && lowerIndex.get(t.toLowerCase());
+          if (real && inbound.has(real) && real !== pg.path)
+            inbound.set(real, inbound.get(real) + 1);
+        }
+      }
+      homePath = [...inbound.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0];
+    }
+    const subPagePaths = pagePaths.filter(p => p !== homePath);
+    return { name, files, lowerIndex, pages, homePath, subPagePaths, errors };
+  }
+
+  A.loadSubmission = async (name, bytes) => build(name, await A.ZipReader.read(bytes));
+
+  A.submissionFromTexts = async (name, filesObj) => {
+    const files = new Map();
+    for (const [p, v] of Object.entries(filesObj))
+      files.set(p, typeof v === 'string' ? new TextEncoder().encode(v) : U.b64ToBytes(v.b64));
+    return build(name, files);
+  };
+})();
+</script>
 <script id="module-render"></script>
 <script id="module-analyze"></script>
 <script id="module-css"></script>
