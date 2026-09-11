@@ -407,6 +407,118 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
     return { snapshots };
   };
 })();
+
+(() => {
+  const A = Automarker, U = A.util;
+  U.parseRgb = s => { const m = /rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/.exec(s || '');
+    return m ? { r: +m[1], g: +m[2], b: +m[3], a: m[4] === undefined ? 1 : +m[4] } : null; };
+  U.rgbToHsl = (r, g, b) => { r /= 255; g /= 255; b /= 255;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2;
+    if (mx === mn) return { h: 0, s: 0, l };
+    const d = mx - mn, s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+    let h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return { h: Math.round(h * 60), s, l }; };
+  const lum = ({ r, g, b }) => { const f = c => { c /= 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+  U.contrast = (c1, c2) => { const [a, b] = [lum(c1), lum(c2)].sort((x, y) => y - x);
+    return (a + 0.05) / (b + 0.05); };
+  const effectiveBg = (el, win) => { let n = el;
+    while (n && n.nodeType === 1) {
+      const c = U.parseRgb(win.getComputedStyle(n).backgroundColor);
+      if (c && c.a > 0.1) return c;
+      n = n.parentElement; }
+    return { r: 255, g: 255, b: 255, a: 1 }; };
+
+  A.analyzerHooks.push(async (handle, snap, submission, opts) => {
+    const { doc, win, iframe } = handle;
+    if (!doc.body) return;
+    const all = [...doc.querySelectorAll('*')].slice(0, 3000);
+
+    // palette: area-weighted colours
+    const byColor = new Map(); let nonDefault = false;
+    const addColor = (c, area) => { if (!c || c.a < 0.1) return;
+      const k = `${c.r},${c.g},${c.b}`;
+      const e = byColor.get(k) || { ...c, ...U.rgbToHsl(c.r, c.g, c.b), area: 0 };
+      e.area += area; byColor.set(k, e); };
+    for (const el of all) {
+      const r = el.getBoundingClientRect(); const area = r.width * r.height;
+      if (area < 100) continue;
+      const cs = win.getComputedStyle(el);
+      const bg = U.parseRgb(cs.backgroundColor);
+      if (bg && bg.a > 0.1) { addColor(bg, area);
+        if (!(bg.r === 255 && bg.g === 255 && bg.b === 255)) nonDefault = true; }
+      if ([...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim())) {
+        const fg = U.parseRgb(cs.color); addColor(fg, Math.min(area, 5000));
+        if (fg && (fg.r || fg.g || fg.b)) nonDefault = true; }
+    }
+    const colors = [...byColor.values()].sort((a, b) => b.area - a.area).slice(0, 50)
+      .map(c => ({ r: c.r, g: c.g, b: c.b, h: c.h, s: +c.s.toFixed(2), l: +c.l.toFixed(2),
+                   area: Math.round(c.area) }));
+    const minArea = snap.viewport.w * snap.viewport.h * 0.005;
+    const hueBuckets = new Set(), hiSat = new Set();
+    for (const c of colors) if (c.area >= minArea && c.s > 0.15 && c.l > 0.08 && c.l < 0.95) {
+      hueBuckets.add(Math.floor(c.h / 30)); if (c.s > 0.6) hiSat.add(Math.floor(c.h / 30)); }
+    snap.palette = { colors, distinctHues: hueBuckets.size, highSatHues: hiSat.size, nonDefault };
+
+    // typography
+    const DEFAULTS = new Set(['times', '"times new roman"', 'times new roman', 'serif', '-webkit-standard']);
+    const famOf = el => (win.getComputedStyle(el).fontFamily.split(',')[0] || '')
+      .trim().toLowerCase().replace(/^["']|["']$/g, '');
+    const textEls = [doc.body, ...doc.querySelectorAll('p, h1, h2, h3, li')];
+    const families = [...new Set(textEls.map(famOf).filter(Boolean))];
+    const mainPara = [...doc.querySelectorAll('p, li, td, div')]
+      .filter(e => [...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim().length > 20))
+      .sort((a, b) => b.textContent.length - a.textContent.length)[0] || doc.body;
+    const mcs = win.getComputedStyle(mainPara);
+    const fg = U.parseRgb(mcs.color) || { r: 0, g: 0, b: 0 };
+    snap.typography = { families,
+      defaultFontOnly: families.every(f => DEFAULTS.has(f)),
+      bodySizePx: Math.round(parseFloat(mcs.fontSize)),
+      contrastRatio: +U.contrast(fg, effectiveBg(mainPara, win)).toFixed(2) };
+
+    // spacing
+    const kids = [...doc.body.children].filter(e => e.getBoundingClientRect().height > 2);
+    let insetLeft = snap.viewport.w, insetRight = snap.viewport.w, gaps = [];
+    let prevBottom = null;
+    for (const el of kids) { const r = el.getBoundingClientRect();
+      insetLeft = Math.min(insetLeft, Math.max(0, r.left));
+      insetRight = Math.min(insetRight, Math.max(0, snap.viewport.w - r.right));
+      if (prevBottom !== null) gaps.push(Math.max(0, r.top - prevBottom));
+      prevBottom = r.bottom; }
+    const sections = [...doc.querySelectorAll('main > *, body > section, body > article, body > div')]
+      .filter(e => e.getBoundingClientRect().height > 20);
+    let sPrev = null; const sGaps = [];
+    for (const el of sections) { const r = el.getBoundingClientRect();
+      if (sPrev !== null) sGaps.push(Math.max(0, r.top - sPrev)); sPrev = r.bottom; }
+    const allGaps = sGaps.length ? sGaps : gaps;
+    const mainBlock = kids.sort((a, b) =>
+      (b.getBoundingClientRect().width * b.getBoundingClientRect().height) -
+      (a.getBoundingClientRect().width * a.getBoundingClientRect().height))[0];
+    snap.spacing = {
+      insetLeft: Math.round(insetLeft === snap.viewport.w ? 0 : insetLeft),
+      insetRight: Math.round(insetRight === snap.viewport.w ? 0 : insetRight),
+      contentWidthRatio: mainBlock
+        ? +(mainBlock.getBoundingClientRect().width / snap.viewport.w).toFixed(2) : 1,
+      horizontalOverflow: doc.documentElement.scrollWidth > snap.viewport.w + 2,
+      sectionGapAvg: allGaps.length
+        ? Math.round(allGaps.reduce((a, b) => a + b, 0) / allGaps.length) : 0 };
+
+    // responsive re-measure
+    const widths = opts.responsiveWidths ?? [1280, 768, 375];
+    snap.responsive = [];
+    for (const w of widths) {
+      iframe.style.width = w + 'px';
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const overflow = doc.documentElement.scrollWidth > w + 2;
+      const mb = [...doc.body.children].sort((a, b) =>
+        b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0];
+      snap.responsive.push({ w, horizontalOverflow: overflow,
+        contentWidthRatio: mb ? +(mb.getBoundingClientRect().width / w).toFixed(2) : 1 });
+    }
+    iframe.style.width = snap.viewport.w + 'px';
+  });
+})();
 </script>
 <script id="module-css"></script>
 <script id="module-checks"></script>
