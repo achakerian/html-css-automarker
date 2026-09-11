@@ -43,6 +43,11 @@ const STYLED = {
 // on failing/degrading.
 const PLAIN = { 'index.html':
   '<html><body style="margin:0"><p style="font-size:9px">a plain page with no real typographic or spatial design effort at all</p></body></html>' };
+// Truly bare page — zero author CSS at all. Pins Chromium's UA defaults (8px body margin,
+// 16px black-on-white text) explicitly into the partial/never-full bands, rather than
+// relying on PLAIN's deliberate author styles to demonstrate degradation.
+const BARE = { 'index.html':
+  '<html><body><p>plain default paragraph text for the bare fixture</p></body></html>' };
 
 test('design checks pass on the styled page', async () => {
   for (const id of ['colourTheme', 'typography', 'whiteSpace', 'margins', 'sectionStructure']) {
@@ -56,6 +61,21 @@ test('design checks fail/degrade on an unstyled page', async () => {
     const r = await run(PLAIN, id);
     assert.ok(r._fraction <= 0.5, `${id} fraction ${r._fraction}`);
   }
+});
+
+test('colourTheme hues sub-result is 0 (not 0.5) when zero distinct hues are present', async () => {
+  const r = await run(BARE, 'colourTheme');
+  assert.equal(r.subResults.find(s => s.id === 'hues').pass, 0);
+});
+
+test('bare page (zero author CSS): UA defaults land in partial bands, not full marks', async () => {
+  const margins = await run(BARE, 'margins');
+  assert.equal(margins._fraction, 0.5);            // UA 8px body margin → partial, not full
+  const typography = await run(BARE, 'typography');
+  assert.ok(typography._fraction > 0.6 && typography._fraction < 0.7,
+    `typography fraction ${typography._fraction}`); // customFont 0, size 1, contrast 1 → ~2/3
+  const colourTheme = await run(BARE, 'colourTheme');
+  assert.equal(colourTheme.subResults.find(s => s.id === 'hues').pass, 0);
 });
 
 test('images: counts well-sized images, flags stretching, marks relevance for review', async () => {

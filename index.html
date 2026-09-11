@@ -756,8 +756,8 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       const p = s.palette ?? { nonDefault: false, distinctHues: 0, highSatHues: 0, colors: [] };
       const subs = [
         sub('nonDefault', 'Non-default colours used', p.nonDefault ? 1 : 0),
-        sub('hues', 'Coherent hue count', p.distinctHues >= 1 && p.distinctHues <= 6 ? 1
-          : p.distinctHues <= 8 ? 0.5 : 0),
+        sub('hues', 'Coherent hue count', p.distinctHues === 0 ? 0
+          : p.distinctHues <= 6 ? 1 : p.distinctHues <= 8 ? 0.5 : 0),
         sub('noClash', 'No clashing saturated hues', Math.max(0, 1 - Math.max(0, p.highSatHues - 2) * 0.5)),
         sub('richness', 'More than two colours', p.colors.length >= 3 ? 1 : p.colors.length === 2 ? 0.5 : 0)
       ];
@@ -807,8 +807,8 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
     ({ snapshot: s }) => {
       const sp = s.spacing ?? { insetLeft: 0, insetRight: 0 };
       const inset = Math.min(sp.insetLeft, sp.insetRight);
-      return { subResults: [sub('inset', 'Content inset from edges', band(inset, 8, 2))],
-        evidence: [ev(inset >= 8 ? 'pass' : 'fail',
+      return { subResults: [sub('inset', 'Content inset from edges', band(inset, 16, 4))],
+        evidence: [ev(inset >= 16 ? 'pass' : 'fail',
           `${s.path}: content inset ${sp.insetLeft}px left / ${sp.insetRight}px right`)] };
     });
 
