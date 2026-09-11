@@ -29,3 +29,9 @@ test('skips contractions (straight and curly apostrophes), still catches real mi
   const words = out.map(o => o.word).sort();
   assert.deepEqual(words, ['definately']);
 });
+
+test('accepts common irregular forms missing from the base dictionary', async () => {
+  const out = await app.page.evaluate(async () =>
+    Automarker.spell.check('she has held paid work with women', {}));
+  assert.deepEqual(out, []);
+});

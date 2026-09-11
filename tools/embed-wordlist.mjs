@@ -9,7 +9,8 @@ favourite favourites colour colours colourful customise customised organise orga
 realise realised recognise specialise specialised personalise personalised
 travelled travelling jewellery centre theatre litre metre metres kilometre kilometres
 neighbourhood programme programmes grey honour honours behaviour behaviours
-backpack backpacks pickup dropdown lifestyle lifestyles`.split(/\s+/);
+backpack backpacks pickup dropdown lifestyle lifestyles
+has women held paid men children feet teeth mice geese wives knives lives halves leaves loaves shelves thieves oxen dice person people said went gone done seen begun drunk sung swum rung wrung torn worn sworn born drawn thrown grown known flown shown risen driven written ridden hidden bitten beaten eaten fallen forgotten given taken mistaken shaken spoken stolen woken broken chosen frozen`.split(/\s+/);
 
 const dict = readFileSync('/usr/share/dict/words', 'utf8').split('\n')
   .filter(w => /^[a-z]+$/.test(w));
