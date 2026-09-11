@@ -883,6 +883,153 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
         evidence: [ev(kb <= t.fullKB ? 'pass' : 'fail', `${s.path}: ${kb} KB total`)] };
     });
 })();
+(() => {
+  const A = Automarker, { sub, ev, frac } = A.checkUtil;
+  const live = snaps => Object.values(snaps).filter(s => !s.error);
+  // Site-level rule union keyed by selector|source|origin|media — a base rule and its
+  // @media override are distinct entries so a requirement/unused check doesn't conflate
+  // a top-level selector with the same selector re-declared inside a media query.
+  const allRules = snaps => {
+    const map = new Map();
+    for (const s of live(snaps)) for (const r of (s.css?.rules ?? [])) {
+      const k = `${r.selector}|${r.source}|${r.origin}|${r.media}`;
+      const e = map.get(k) || { ...r, matchesAnywhere: false };
+      e.matchesAnywhere = e.matchesAnywhere || r.matches;
+      map.set(k, e);
+    }
+    return [...map.values()];
+  };
+
+  A.registerCheck('cssExternal',
+    { label: 'External stylesheet linked from every page', scopes: ['site'], params: [] },
+    ({ snapshots }) => {
+      const pages = live(snapshots);
+      const cssFiles = pages[0]?.css?.external ?? [];
+      const linked = frac(pages, p => p.css?.externalLinkedHere);
+      return { subResults: [
+          sub('exists', 'External .css file present', cssFiles.length ? 1 : 0),
+          sub('linkedAll', 'Linked from every page', linked, 2) ],
+        evidence: [ev(linked === 1 && cssFiles.length ? 'pass' : 'fail',
+          `${cssFiles.length} css file(s); linked on ${Math.round(linked * pages.length)}/${pages.length} page(s)`)] };
+    });
+
+  A.registerCheck('cssSelectorTypes',
+    { label: 'Required CSS selector types', scopes: ['site'],
+      params: [{ key: 'requirements', label: 'Requirements [{kind,min,origin}]', type: 'json', default: [] }] },
+    ({ snapshots, params }) => {
+      const rules = allRules(snapshots);
+      const subs = [], evidence = [];
+      for (const req of params.requirements ?? []) {
+        const hits = rules.filter(r => r.kinds.includes(req.kind) &&
+          (req.origin === 'any' || !req.origin || r.origin === req.origin));
+        const pass = Math.min(1, hits.length / req.min);
+        subs.push(sub(`req-${req.origin ?? 'any'}-${req.kind}`,
+          `${req.min}× ${req.kind} (${req.origin ?? 'any'})`, pass));
+        evidence.push(ev(pass === 1 ? 'pass' : 'fail',
+          `${req.kind} (${req.origin ?? 'any'}): ${hits.length}/${req.min}` +
+          (hits.length ? ` — e.g. "${hits[0].selector}"` : '')));
+      }
+      return { subResults: subs, evidence };
+    });
+
+  A.registerCheck('cssUnused',
+    { label: 'No unused CSS selectors', scopes: ['site'], params: [] },
+    ({ snapshots }) => {
+      const unused = allRules(snapshots).filter(r => !r.matchesAnywhere &&
+        !/^(html|body|\*|:root)/i.test(r.selector.trim()));
+      return { subResults: [sub('none', 'Every selector used somewhere',
+          Math.max(0, 1 - unused.length / 10))],
+        evidence: unused.length ? unused.map(r => ev('fail',
+            `Unused selector "${r.selector}" in ${r.source} (${r.origin})`))
+          : [ev('pass', 'All selectors match at least one element on some page')],
+        instances: unused.map(r => ({ text: `Unused selector "${r.selector}" in ${r.source}` })) };
+    });
+
+  A.registerCheck('inlineStyles',
+    { label: 'Inline styles per page', scopes: ['eachPage', 'home'],
+      params: [{ key: 'min', label: 'Minimum inline styles', type: 'number', default: 3 },
+               { key: 'requireTags', label: 'Tags that must carry one', type: 'json', default: ['div', 'span'] }] },
+    ({ snapshot: s, params }) => {
+      const min = params.min ?? 3;
+      const subs = [sub('count', `≥ ${min} inline style(s)`,
+        Math.min(1, s.inlineStyles.count / min), 2)];
+      for (const t of params.requireTags ?? [])
+        subs.push(sub(`tag-${t}`, `Inline style on <${t}>`, s.inlineStyles.tags.includes(t) ? 1 : 0));
+      return { subResults: subs,
+        evidence: [ev(s.inlineStyles.count >= min ? 'pass' : 'fail',
+          `${s.path}: ${s.inlineStyles.count} inline style(s) on [${s.inlineStyles.tags.join(', ')}]`)] };
+    });
+
+  A.registerCheck('wordCount',
+    { label: 'Minimum word count', scopes: ['eachPage', 'home', 'site'],
+      params: [{ key: 'min', label: 'Minimum words', type: 'number', default: 100 }] },
+    ({ snapshot: s, snapshots, params }) => {
+      const n = s ? s.text.wordCount
+        : live(snapshots).reduce((a, p) => a + p.text.wordCount, 0);
+      return { subResults: [sub('words', `≥ ${params.min} words`, Math.min(1, n / params.min))],
+        evidence: [ev(n >= params.min ? 'pass' : 'fail',
+          `${s ? s.path : 'site'}: ${n} word(s) of ${params.min} required`)] };
+    });
+
+  A.registerCheck('mediaPresence',
+    { label: 'Required media present', scopes: ['eachPage', 'home', 'site'],
+      params: [{ key: 'require', label: '[{kind,min}] kinds: video|gif|iframe|img|audio', type: 'json', default: [] },
+               { key: 'anyOf', label: 'Any one requirement suffices', type: 'boolean', default: false }] },
+    ({ snapshot: s, snapshots, params }) => {
+      const pages = s ? [s] : live(snapshots);
+      const count = kind => pages.reduce((a, p) => a + (kind === 'img'
+        ? p.images.filter(i => i.ok).length : (p.media[kind + 's'] ?? p.media[kind] ?? 0)), 0);
+      const results = (params.require ?? []).map(r =>
+        ({ ...r, n: count(r.kind), met: count(r.kind) >= r.min }));
+      const evidence = results.map(r => ev(r.met ? 'pass' : 'fail',
+        `${r.kind}: ${r.n}/${r.min}`));
+      if (params.anyOf) return { subResults: [sub('any',
+          results.map(r => `${r.min}× ${r.kind}`).join(' OR '),
+          results.some(r => r.met) ? 1 : 0)], evidence };
+      return { subResults: results.map(r =>
+        sub(`media-${r.kind}`, `${r.min}× ${r.kind}`, Math.min(1, r.n / r.min))), evidence };
+    });
+
+  A.registerCheck('responsive',
+    { label: 'Responsive layout', scopes: ['eachPage', 'home', 'subpages'], params: [] },
+    ({ snapshot: s }) => {
+      const rs = s.responsive ?? [];
+      const narrow = rs[rs.length - 1];
+      return { subResults: [
+          sub('noOverflow', 'No overflow at any width', frac(rs, r => !r.horizontalOverflow), 2),
+          sub('adapts', 'Content fills narrow screens', narrow && narrow.contentWidthRatio >= 0.85 ? 1 : 0) ],
+        evidence: rs.map(r => ev(r.horizontalOverflow ? 'fail' : 'pass',
+          `${s.path} @${r.w}px: ${r.horizontalOverflow ? 'overflows' : 'fits'} (content ratio ${r.contentWidthRatio})`)) };
+    });
+
+  A.registerCheck('directions',
+    { label: 'Directions on the location/contact page', scopes: ['site'], params: [] },
+    ({ snapshots, config }) => {
+      const hints = config.topic.locationHints ?? ['location', 'contact'];
+      const re = new RegExp(hints.join('|'), 'i');
+      const scored = live(snapshots).map(p => ({ p,
+        score: (re.test(p.path) ? 3 : 0) + (re.test(p.title) ? 2 : 0) +
+          hints.filter(h => p.text.visibleText.toLowerCase().includes(h)).length }))
+        .sort((a, b) => b.score - a.score);
+      const loc = scored[0]?.p;
+      if (!loc) return { subResults: [sub('page', 'Location page found', 0)],
+        evidence: [ev('fail', 'No pages to search for directions')] };
+      const t = loc.text.visibleText;
+      const address = /\d+[\w\s,.-]{0,40}\b(st|street|rd|road|ave|avenue|hwy|highway|dr|drive|blvd|boulevard|ct|court|ln|lane|pl|place|way|parade|crescent)\b/i.test(t);
+      const hours = /\b(mon|tue|wed|thu|fri|sat|sun|monday|open|hours)\b/i.test(t) &&
+        /\d{1,2}([:.]\d{2})?\s*(am|pm)|\d{1,2}\s*[-–]\s*\d{1,2}/i.test(t);
+      const map = loc.images.some(i => /map/i.test(i.raw) || /map/i.test(i.alt || ''));
+      const contact = /(\+?\d[\d\s()-]{7,}\d)/.test(t) || loc.links.some(l => l.mailto);
+      return { subResults: [
+          sub('address', 'Street address', address ? 1 : 0),
+          sub('hours', 'Opening hours', hours ? 1 : 0),
+          sub('map', 'Map image', map ? 1 : 0),
+          sub('contact', 'Phone or email', contact ? 1 : 0) ],
+        evidence: [ev('info', `Checked ${loc.path} for directions`),
+          ...[['address', address], ['hours', hours], ['map image', map], ['contact details', contact]]
+            .map(([k, v]) => ev(v ? 'pass' : 'fail', `${loc.path}: ${k} ${v ? 'found' : 'missing'}`))] };
+    });
+})();
 </script>
 <script id="module-spell"></script>
 <script id="module-config"></script>
