@@ -417,7 +417,7 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
     if (mx === mn) return { h: 0, s: 0, l };
     const d = mx - mn, s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
     let h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
-    return { h: Math.round(h * 60), s, l }; };
+    return { h: Math.round(h * 60) % 360, s, l }; };
   const lum = ({ r, g, b }) => { const f = c => { c /= 255;
       return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
     return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
@@ -436,6 +436,7 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
     const all = [...doc.querySelectorAll('*')].slice(0, 3000);
 
     // palette: area-weighted colours
+    const DEFAULT_LINK_RGB = new Set(['0,0,238', '85,26,139']); // UA default unvisited/visited link colours
     const byColor = new Map(); let nonDefault = false;
     const addColor = (c, area) => { if (!c || c.a < 0.1) return;
       const k = `${c.r},${c.g},${c.b}`;
@@ -450,7 +451,8 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
         if (!(bg.r === 255 && bg.g === 255 && bg.b === 255)) nonDefault = true; }
       if ([...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim())) {
         const fg = U.parseRgb(cs.color); addColor(fg, Math.min(area, 5000));
-        if (fg && (fg.r || fg.g || fg.b)) nonDefault = true; }
+        const isDefaultLinkColor = fg && DEFAULT_LINK_RGB.has(`${fg.r},${fg.g},${fg.b}`) && el.closest('a');
+        if (fg && (fg.r || fg.g || fg.b) && !isDefaultLinkColor) nonDefault = true; }
     }
     const colors = [...byColor.values()].sort((a, b) => b.area - a.area).slice(0, 50)
       .map(c => ({ r: c.r, g: c.g, b: c.b, h: c.h, s: +c.s.toFixed(2), l: +c.l.toFixed(2),
@@ -467,9 +469,11 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       .trim().toLowerCase().replace(/^["']|["']$/g, '');
     const textEls = [doc.body, ...doc.querySelectorAll('p, h1, h2, h3, li')];
     const families = [...new Set(textEls.map(famOf).filter(Boolean))];
+    const directTextLen = e => [...e.childNodes].filter(n => n.nodeType === 3)
+      .reduce((sum, n) => sum + n.textContent.trim().length, 0);
     const mainPara = [...doc.querySelectorAll('p, li, td, div')]
-      .filter(e => [...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim().length > 20))
-      .sort((a, b) => b.textContent.length - a.textContent.length)[0] || doc.body;
+      .filter(e => directTextLen(e) > 20)
+      .sort((a, b) => directTextLen(b) - directTextLen(a))[0] || doc.body;
     const mcs = win.getComputedStyle(mainPara);
     const fg = U.parseRgb(mcs.color) || { r: 0, g: 0, b: 0 };
     snap.typography = { families,

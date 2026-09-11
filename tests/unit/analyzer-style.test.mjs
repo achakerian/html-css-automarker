@@ -22,6 +22,14 @@ const STYLED = {
 };
 const UNSTYLED = { 'index.html': '<html><body><p>plain default page</p></body></html>' };
 const OVERFLOW = { 'index.html': '<html><body><div style="width:2000px;height:50px;background:#333">wide</div></body></html>' };
+const UNSTYLED_WITH_LINK = { 'index.html':
+  '<html><body><p>plain default page text</p><a href="x.html">link</a></body></html>' };
+const WRAPPER_DIV = { 'index.html': `<html><head><style>
+    div { font-size: 30px; color:#000000; }
+    p { font-size: 18px; color:#0000ff; }
+  </style></head><body>
+    <div>Intro copy that also counts toward length here.<p>Actual paragraph with the important readable content for size and contrast measurement purposes today.</p></div>
+  </body></html>` };
 
 test('palette, typography, spacing on a styled page', async () => {
   const s = await snapshotFor(app.page, STYLED, 'index.html');
@@ -44,6 +52,18 @@ test('unstyled page reads as default', async () => {
   assert.equal(s.typography.defaultFontOnly, true);
 });
 
+test('nonDefault ignores default UA hyperlink colour but styled pages still trip it', async () => {
+  const unstyled = await snapshotFor(app.page, UNSTYLED_WITH_LINK, 'index.html');
+  assert.equal(unstyled.palette.nonDefault, false);
+  const styled = await snapshotFor(app.page, STYLED, 'index.html');
+  assert.equal(styled.palette.nonDefault, true);
+});
+
+test('mainPara selection uses direct text length, not recursive textContent, so a wrapper div does not outrank its own paragraph', async () => {
+  const s = await snapshotFor(app.page, WRAPPER_DIV, 'index.html');
+  assert.equal(s.typography.bodySizePx, 18);
+});
+
 test('responsive measurements detect fixed-width overflow at narrow widths', async () => {
   const s = await snapshotFor(app.page, OVERFLOW, 'index.html');
   assert.deepEqual(s.responsive.map(r => r.w), [1280, 768, 375]);
@@ -60,4 +80,9 @@ test('colour utils', async () => {
   assert.deepEqual(r[0], { r: 255, g: 0, b: 0, a: 1 });
   assert.equal(r[1], 0);
   assert.equal(r[2], 21);
+});
+
+test('rgbToHsl wraps a hue that rounds up to 360 back to 0', async () => {
+  const h = await app.page.evaluate(() => Automarker.util.rgbToHsl(255, 1, 2).h);
+  assert.equal(h, 0);
 });
