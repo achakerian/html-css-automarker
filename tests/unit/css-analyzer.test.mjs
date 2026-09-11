@@ -49,3 +49,52 @@ test('classifies selector kinds and detects usage', async () => {
   assert.equal(s.css.rules.find(r => r.selector === '.cta').matches, true);
   assert.deepEqual(s.css.inline, []);
 });
+
+test('pseudo-function arguments with +/~/> do not fracture compound splitting', async () => {
+  const r = await app.page.evaluate(() => ({
+    trNth: Automarker.CssAnalyzer.classifySelector('tr:nth-child(2n+1)', null, null),
+    pNth: Automarker.CssAnalyzer.classifySelector('p:nth-child(2n+1)', null, null)
+  }));
+  assert.ok(!r.trNth.includes('contextual'));
+  assert.ok(r.pNth.includes('pFormat'));
+});
+
+test('hoverAnchor requires :hover on the same compound whose tag is a', async () => {
+  const r = await app.page.evaluate(() => ({
+    a: Automarker.CssAnalyzer.classifySelector('a:hover', null, null),
+    navA: Automarker.CssAnalyzer.classifySelector('nav a:hover', null, null),
+    aB: Automarker.CssAnalyzer.classifySelector('a b:hover', null, null)
+  }));
+  assert.ok(r.a.includes('hoverAnchor'));
+  assert.ok(r.navA.includes('hoverAnchor'));
+  assert.ok(!r.aB.includes('hoverAnchor'));
+});
+
+const IMPORT_SITE = {
+  'index.html': `<html><head><link rel="stylesheet" href="import.css"></head>
+    <body><p>text</p></body></html>`,
+  'import.css': `@import url("http://example.com/y.css");
+    p { color: red; }`
+};
+
+test('a leading @import does not drop the rest of the stylesheet', async () => {
+  const s = await snapshotFor(app.page, IMPORT_SITE, 'index.html');
+  const rule = s.css.rules.find(r => r.selector === 'p');
+  assert.ok(rule, 'p rule after @import should still be parsed');
+  assert.ok(rule.props.includes('color'));
+});
+
+const MEDIA_SITE = {
+  'index.html': `<html><head><style>
+      .box { color: black; }
+      @media (max-width: 500px) { .box { color: blue; } }
+    </style></head><body><div class="box"></div></body></html>`
+};
+
+test('rules record the enclosing @media condition text', async () => {
+  const s = await snapshotFor(app.page, MEDIA_SITE, 'index.html');
+  const boxRules = s.css.rules.filter(r => r.selector === '.box');
+  assert.equal(boxRules.length, 2);
+  assert.ok(boxRules.some(r => r.media === ''));
+  assert.ok(boxRules.some(r => r.media === '(max-width: 500px)'));
+});

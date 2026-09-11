@@ -528,19 +528,28 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
 (() => {
   const A = Automarker;
   const TAGS_H = /(^|[\s>+~,(])h[1-6]\b/i;
+  // Neutralise +/~/>/space inside pseudo-function arguments (e.g. :nth-child(2n+1))
+  // so they never get mistaken for combinators when splitting into compounds.
+  const maskParens = s => s.replace(/\(([^()]*)\)/g, m => m.replace(/[+~>\s]/g, '_'));
 
   function parseRules(text) {
     // Use the browser's CSS parser via a constructable stylesheet
     const sheet = new CSSStyleSheet();
-    try { sheet.replaceSync(text); } catch { return []; }
+    // @import is disallowed in constructable stylesheets and would otherwise
+    // make replaceSync reject the whole file; drop it and keep the rest.
+    const cleaned = text.replace(/@import\s+[^;]+;/gi, '');
+    try { sheet.replaceSync(cleaned); } catch { return []; }
     const out = [];
-    const walk = rules => { for (const r of rules) {
+    const walk = (rules, media) => { for (const r of rules) {
       if (r instanceof CSSStyleRule)
         out.push({ selector: r.selectorText, props: [...r.style].map(p => p.toLowerCase()),
-                   style: r.style });
-      else if (r.cssRules) walk(r.cssRules);   // @media etc.
+                   style: r.style, media });
+      else if (r.cssRules) {   // @media etc. — track the enclosing condition text
+        const cond = typeof r.conditionText === 'string' && r.conditionText;
+        walk(r.cssRules, cond ? (media ? `${media} and ${cond}` : cond) : media);
+      }
     } };
-    walk(sheet.cssRules);
+    walk(sheet.cssRules, '');
     return out;
   }
 
@@ -549,7 +558,7 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
 
   function classifySelector(selectorText, rule, doc) {
     const kinds = new Set();
-    const sels = selectorText.split(',').map(s => s.trim()).filter(Boolean);
+    const sels = maskParens(selectorText).split(',').map(s => s.trim()).filter(Boolean);
     const finalTags = new Set();
     for (const sel of sels) {
       const compounds = sel.split(/\s*[>+~]\s*|\s+/).filter(Boolean);
@@ -562,7 +571,9 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       if (/^\.[A-Za-z_-][\w-]*$/.test(lastNoPseudo)) kinds.add('classGeneric');
       if (/^[a-z][a-z0-9]*\.[\w-]+$/i.test(lastNoPseudo)) kinds.add('classScoped');
       if (TAGS_H.test(' ' + sel)) kinds.add('headingStyle');
-      if (/(^|[\s>+~,])a[^,]*:hover/i.test(' ' + sel)) kinds.add('hoverAnchor');
+      // hoverAnchor: :hover must land on a compound whose own tag is `a`
+      for (const c of compounds)
+        if (/^a(?:[.#\[:]|$)/i.test(c) && /:hover/i.test(c)) kinds.add('hoverAnchor');
       if (isBareTag(lastNoPseudo, 'body') && compounds.length === 1) kinds.add('bodyStyle');
       if (isBareTag(lastNoPseudo, 'header') && compounds.length === 1) kinds.add('headerStyle');
       if (isBareTag(lastNoPseudo, 'footer') && compounds.length === 1) kinds.add('footerStyle');
@@ -598,7 +609,7 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
         const stripped = r.selector.replace(/::?[a-z-]+(\([^)]*\))?/gi, '') || '*';
         try { matches = !!doc.querySelector(stripped); } catch { matches = false; }
         rules.push({ origin: src.origin, source: src.path, selector: r.selector,
-          props: r.props, kinds: classifySelector(r.selector, r, doc), matches });
+          props: r.props, kinds: classifySelector(r.selector, r, doc), matches, media: r.media });
       }
     }
     const inline = [...doc.querySelectorAll('[style]')].map(el => ({
