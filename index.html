@@ -12,7 +12,7 @@ body { margin:0; font:14px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;
   background:var(--bg); color:var(--ink); }
 #render-host { position:absolute; left:-100000px; top:0; }
 header.app { display:flex; gap:12px; align-items:center; padding:10px 16px;
-  background:var(--panel); border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  background:var(--panel); border-bottom:1px solid var(--line); flex-wrap:nowrap; overflow-x:auto; }
 header.app h1 { font-size:16px; margin:0 12px 0 0; }
 select,button { font:inherit; padding:6px 10px; border:1px solid var(--line);
   border-radius:6px; background:#fff; cursor:pointer; }
@@ -59,6 +59,13 @@ section.sec > h2 { font-size:14px; margin:0; padding:10px 14px;
   flex-wrap:wrap; }
 #preview-body { flex:1; overflow:auto; padding:8px; }
 #preview-body iframe { width:1280px; height:76vh; border:1px solid var(--line); }
+/* top is a fixed offset (not 3vh, unlike #preview-modal) so the modal clears
+   header.app's rendered height and never covers the open-builder trigger button
+   that reopens it. */
+#builder-modal { position:fixed; top:84px; right:3vw; bottom:3vh; left:3vw;
+  background:var(--panel); border:1px solid var(--line); border-radius:10px;
+  z-index:60; display:flex; flex-direction:column; box-shadow:0 12px 40px rgba(0,0,0,.25); }
+#builder-modal[hidden] { display:none; }
 #progress { color:var(--muted); }
 </style>
 </head>
@@ -1571,7 +1578,71 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
   };
 })();
 </script>
-<script id="module-export"></script>
+<script id="module-export">
+(() => {
+  const A = Automarker;
+  const q = v => { const s = String(v ?? '');
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
+  A.exporter = {
+    toCSV(records, config) {
+      const model = records.find(r => r.sheet)?.sheet;
+      if (!model) return 'name,error\n' +
+        records.map(r => `${q(r.name)},${q(r.error ?? '')}`).join('\n');
+      const rowIds = model.items.map(i => i.id);
+      const head = ['name',
+        ...rowIds.flatMap(id => [`${id}:auto`, `${id}:final`]),
+        ...model.sections.map(s => `${s.id}:score`),
+        ...model.deductions.map(d => `${d.id}:total`),
+        'overridden', 'total', 'mappedMark', 'requirementsMet', 'requirementsTotal', 'error'];
+      const lines = [head.map(q).join(',')];
+      for (const r of records) {
+        if (!r.sheet) { lines.push([q(r.name), ...head.slice(1, -1).map(() => ''), q(r.error)].join(',')); continue; }
+        const by = Object.fromEntries(r.sheet.items.map(i => [i.id, i]));
+        lines.push([q(r.name),
+          ...rowIds.flatMap(id => [by[id]?.auto ?? '', by[id]?.final ?? '']),
+          ...r.sheet.sections.map(s => s.score),
+          ...r.sheet.deductions.map(d => d.total),
+          q(r.sheet.items.filter(i => i.overridden).map(i => i.id).join(';')),
+          r.sheet.total, r.sheet.mappedMark ?? '',
+          r.sheet.requirementsMet, r.sheet.requirementsTotal, ''].join(','));
+      }
+      return lines.join('\n') + '\n';
+    },
+
+    feedbackHTML(record, config) {
+      const s = record.sheet;
+      const secHtml = s.sections.map(sec => `<h2>${esc(sec.title)} — ${
+        sec.points ? `${sec.score}/${sec.points}` : `${sec.reqMet}/${sec.reqTotal} met`}</h2>
+        <table border="1" cellspacing="0" cellpadding="6" width="100%">
+        ${s.items.filter(i => i.sectionId === sec.id).map(i => `<tr>
+          <td>${esc(i.label)}${i.overridden ? ' <em>(adjusted)</em>' : ''}</td>
+          <td align="center">${i.required ? (i.passed ? '✓' : '✗') : `${i.final}/${i.max}`}</td>
+          <td>${i.evidence.map(e => `<div>${esc(e.text)}</div>`).join('')}</td></tr>`).join('')}
+        </table>`).join('');
+      const dedHtml = s.deductions.map(d => `<p><b>${esc(d.label)}: ${d.total}</b>${
+        d.instances.filter(i => i.confirmed).map(i => `<br>− ${esc(i.text)}`).join('')}</p>`).join('');
+      return `<!DOCTYPE html><html><head><meta charset="utf-8">
+        <title>Feedback — ${esc(record.name)}</title>
+        <style>body{font:14px/1.5 system-ui;margin:24px;max-width:900px}
+        table{border-collapse:collapse;margin-bottom:16px}td{vertical-align:top}</style></head>
+        <body><h1>${esc(record.name)}</h1><p>${esc(config.meta.title)}</p>
+        <p><b>Total: ${s.total}${s.totalPoints ? '/' + s.totalPoints : ''}${
+          s.mappedMark !== null ? ` — mark ${s.mappedMark}` : ''}</b>
+          — requirements ${s.requirementsMet}/${s.requirementsTotal}</p>
+        ${secHtml}<h2>Deductions</h2>${dedHtml}</body></html>`;
+    },
+
+    download(filename, text, mime = 'text/plain') {
+      const u = URL.createObjectURL(new Blob([text], { type: mime }));
+      const a = document.createElement('a');
+      a.href = u; a.download = filename; document.body.appendChild(a);
+      a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 5000);
+    }
+  };
+})();
+</script>
 <script id="module-ui">
 (() => {
   const A = Automarker;
@@ -1616,11 +1687,38 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
     app.append(
       el('header', { class: 'app' },
         el('h1', {}, 'HTML/CSS Submission Automarker'),
-        sel, drop, input, el('span', { id: 'progress' })),
+        sel, drop, input, el('span', { id: 'progress' }),
+        el('button', { 'data-testid': 'export-csv', onclick: () =>
+          A.exporter.download('results.csv',
+            A.exporter.toCSV(A.state.records, A.state.config), 'text/csv') }, 'Export CSV'),
+        el('button', { 'data-testid': 'export-feedback', onclick: () => {
+          const r = A.state.records[activeIdx];
+          if (r && r.sheet) A.exporter.download(`${r.name}-feedback.html`,
+            A.exporter.feedbackHTML(r, A.state.config), 'text/html'); } }, 'Feedback report'),
+        el('button', { 'data-testid': 'open-builder', onclick: openBuilder }, 'Rubric builder')),
       el('div', { class: 'layout' },
         el('div', { id: 'sidebar' }), el('div', { id: 'detail' })),
       el('div', { id: 'preview-modal', hidden: '' },
-        el('div', { id: 'preview-tabs' }), el('div', { id: 'preview-body' })));
+        el('div', { id: 'preview-tabs' }), el('div', { id: 'preview-body' })),
+      el('div', { id: 'builder-modal', hidden: '' },
+        el('div', { id: 'preview-tabs' },
+          el('button', { onclick: () => { $('#builder-modal').hidden = true; } }, '✕ close'),
+          el('button', { 'data-testid': 'builder-validate', onclick: builderValidate }, 'Validate'),
+          el('button', { 'data-testid': 'builder-apply', class: 'primary', onclick: builderApply }, 'Apply'),
+          el('button', { 'data-testid': 'builder-export', onclick: () => {
+            const { cfg } = builderConfig();
+            if (cfg) A.exporter.download(`${cfg.meta.id ?? 'rubric'}.json`,
+              JSON.stringify(cfg, null, 2), 'application/json'); } }, 'Export JSON'),
+          el('label', {}, 'Import ', el('input', { type: 'file', accept: '.json',
+            'data-testid': 'builder-import', onchange: async e => {
+              $('[data-testid="builder-json"]').value = await e.target.files[0].text();
+              renderBuilderForm(); builderValidate(); } }))),
+        el('div', { id: 'preview-body', style: 'display:flex;gap:10px' },
+          el('textarea', { 'data-testid': 'builder-json',
+            style: 'flex:1;min-height:60vh;font-family:monospace',
+            oninput: renderBuilderForm }),
+          el('div', { id: 'builder-form', style: 'flex:1;overflow:auto' })),
+        el('pre', { 'data-testid': 'builder-errors', style: 'padding:8px 14px;color:var(--fail)' })));
     renderAll();
   }
 
@@ -1757,6 +1855,67 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
   function closePreview() {
     if (previewHandle) { previewHandle.cleanup(); previewHandle = null; }
     $('#preview-modal').hidden = true;
+  }
+
+  function openBuilder() {
+    const modal = $('#builder-modal'); modal.hidden = false;
+    const ta = $('[data-testid="builder-json"]', modal);
+    ta.value = JSON.stringify(A.state.config, null, 2);
+    renderBuilderForm();
+  }
+  function builderConfig() {
+    try { return { cfg: JSON.parse($('[data-testid="builder-json"]').value) }; }
+    catch (e) { return { err: `JSON parse error: ${e.message}` }; }
+  }
+  function renderBuilderForm() {
+    const pane = $('#builder-form'); pane.innerHTML = '';
+    const { cfg } = builderConfig(); if (!cfg) return;
+    for (const sec of cfg.sections ?? []) for (const it of sec.items ?? [])
+      pane.append(el('div', { class: 'ded-inst' },
+        el('span', {}, `${sec.id} / ${it.id} — ${it.check} @${it.scope} ${it.max ? it.max + 'pt' : 'required'}`),
+        el('button', { onclick: () => {
+          sec.items = sec.items.filter(x => x !== it);
+          $('[data-testid="builder-json"]').value = JSON.stringify(cfg, null, 2);
+          renderBuilderForm(); } }, 'remove')));
+    const checkSel = el('select', { name: 'check' },
+      ...Object.keys(A.checkMeta).sort().map(c => el('option', { value: c }, c)));
+    const scopeSel = el('select', { name: 'scope' },
+      ...['home', 'eachSubpage', 'subpages', 'eachPage', 'site'].map(sc => el('option', { value: sc }, sc)));
+    const pts = el('input', { name: 'points', type: 'number', placeholder: 'points (empty = required)' });
+    const secSel = el('select', { name: 'section' },
+      ...(cfg.sections ?? []).map(s2 => el('option', { value: s2.id }, s2.id)));
+    pane.append(el('div', { class: 'ded-inst', 'data-testid': 'builder-add' },
+      checkSel, scopeSel, pts, secSel,
+      el('button', { onclick: () => {
+        const sec = cfg.sections.find(s2 => s2.id === secSel.value);
+        const item = { id: `custom-${Date.now() % 100000}`,
+          label: A.checkMeta[checkSel.value].label, check: checkSel.value,
+          mode: 'auto', scope: scopeSel.value };
+        if (pts.value) item.max = +pts.value; else item.required = true;
+        sec.items.push(item);
+        delete sec.points;                       // custom edits invalidate declared totals
+        delete cfg.meta.totalPoints; delete cfg.meta.mappedMarks;
+        $('[data-testid="builder-json"]').value = JSON.stringify(cfg, null, 2);
+        renderBuilderForm(); } }, 'add item')));
+  }
+  function builderValidate() {
+    const out = $('[data-testid="builder-errors"]');
+    const { cfg, err } = builderConfig();
+    if (err) { out.textContent = err; return null; }
+    const errs = A.Config.validate(cfg);
+    out.textContent = errs.length ? errs.join('\n') : 'Config is valid ✓';
+    return errs.length ? null : cfg;
+  }
+  function builderApply() {
+    const cfg = builderValidate(); if (!cfg) return;
+    if (A.state.records.length && !confirm('Applying a rubric clears loaded submissions. Continue?')) return;
+    if (!cfg.meta.id.endsWith('-custom')) cfg.meta.id += '-custom';
+    cfg.meta.title = cfg.meta.title.endsWith(' (custom)') ? cfg.meta.title : cfg.meta.title + ' (custom)';
+    A.presets[cfg.meta.id] = cfg;
+    A.state.config = cfg; A.state.records = []; activeIdx = -1;
+    init();                                       // rebuild header so the select includes the new entry
+    $('[data-testid="rubric-select"]').value = cfg.meta.id;
+    $('#builder-modal').hidden = true;
   }
 
   A.UI = { init, renderAll, openPreview };
