@@ -284,7 +284,129 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
   };
 })();
 </script>
-<script id="module-analyze"></script>
+<script id="module-analyze">
+(() => {
+  const A = Automarker;
+  A.analyzerHooks = [];
+  const isExternal = u => /^(https?:)?\/\//i.test(u) || /^[a-z]:[\\/]/i.test(u) || /^file:/i.test(u);
+
+  A.analyzePage = async (submission, path, opts = {}) => {
+    const viewport = opts.viewport || { w: 1280, h: 800 };
+    const handle = await A.renderPage(submission, path,
+      { width: viewport.w, height: viewport.h, timeoutMs: opts.timeoutMs });
+    try {
+      const { doc, win } = handle;
+      const yOf = el => el.getBoundingClientRect().top + win.scrollY;
+      const pageSet = new Set(submission.pages.map(p => p.path));
+      const resolveReal = raw => {
+        const r = A.resolvePath(path, raw);
+        return r ? (submission.lowerIndex.get(r.toLowerCase()) ?? null) : null;
+      };
+
+      // --- nav detection: <nav>, else densest top-region container of internal page links
+      let navEl = doc.querySelector('nav');
+      if (!navEl) {
+        let best = null, bestN = 1;
+        for (const c of doc.querySelectorAll('header, div, ul, p, table, tr')) {
+          if (yOf(c) > doc.documentElement.scrollHeight * 0.4) continue;
+          const n = [...c.querySelectorAll(':scope > a[href], :scope > li > a[href], :scope > td > a[href]')]
+            .filter(a => { const real = resolveReal(a.getAttribute('href') || ''); return real && pageSet.has(real); }).length;
+          if (n > bestN) { best = c; bestN = n; }
+        }
+        navEl = best;
+      }
+      let styledSignals = 0;
+      if (navEl) {
+        const cs = win.getComputedStyle(navEl);
+        const linkEls = [...navEl.querySelectorAll('a')];
+        const lcs = linkEls.length ? win.getComputedStyle(linkEls[0]) : null;
+        if (cs.backgroundColor !== 'rgba(0, 0, 0, 0)') styledSignals++;
+        if (cs.display === 'flex' || cs.display === 'grid') styledSignals++;
+        if (lcs && lcs.textDecorationLine === 'none') styledSignals++;
+        if (lcs && (parseFloat(lcs.paddingLeft) > 4 || parseFloat(lcs.paddingTop) > 4)) styledSignals++;
+        if (lcs && lcs.color !== 'rgb(0, 0, 238)') styledSignals++;
+      }
+
+      // --- links & anchors
+      const links = [], anchors = [], navLinkTargets = new Set();
+      for (const a of doc.querySelectorAll('a[href]')) {
+        const raw = a.getAttribute('href') || '';
+        if (raw.startsWith('#')) {
+          let targetY = null;
+          if (raw === '#' || raw.toLowerCase() === '#top') targetY = 0;
+          else { const t = doc.getElementById(raw.slice(1)) ||
+                   doc.querySelector(`[name="${CSS.escape(raw.slice(1))}"]`);
+                 if (t) targetY = yOf(t); }
+          anchors.push({ href: raw, y: yOf(a), targetY, text: a.textContent.trim().slice(0, 80) });
+          continue;
+        }
+        const mailto = /^mailto:/i.test(raw);
+        const external = !mailto && isExternal(raw);
+        const real = (!mailto && !external) ? resolveReal(raw) : null;
+        const inNav = !!(navEl && navEl.contains(a));
+        const link = { raw, resolved: real, internal: !mailto && !external,
+          external, mailto, targetExists: !!real, text: a.textContent.trim().slice(0, 80), inNav };
+        links.push(link);
+        if (inNav && real && pageSet.has(real)) navLinkTargets.add(real);
+      }
+
+      // --- images & media
+      const images = [...doc.images].map(img => {
+        const raw = img.getAttribute('data-am-raw') || img.getAttribute('src') || '';
+        const external = img.hasAttribute('data-am-external');
+        const r = img.getBoundingClientRect();
+        const linkEl = img.closest('a[href]');
+        return { raw, external, isGif: /\.gif(\?|$)/i.test(raw),
+          linkTarget: linkEl ? resolveReal(linkEl.getAttribute('href') || '') : null,
+          ok: !external && img.complete && img.naturalWidth > 0,
+          naturalW: img.naturalWidth, naturalH: img.naturalHeight,
+          displayW: Math.round(r.width), displayH: Math.round(r.height),
+          alt: img.getAttribute('alt') ?? null, x: Math.round(r.left), y: Math.round(yOf(img)) };
+      });
+      const media = { videos: doc.querySelectorAll('video').length,
+        iframes: doc.querySelectorAll('iframe').length,
+        gifs: images.filter(i => i.isGif).length,
+        audio: doc.querySelectorAll('audio').length };
+
+      // --- structure, text, inline styles
+      const headings = {};
+      for (let i = 1; i <= 6; i++) headings['h' + i] = doc.querySelectorAll('h' + i).length;
+      const semanticTags = ['header','nav','main','section','article','aside','footer']
+        .filter(t => doc.querySelector(t));
+      const structure = { sectionCount: doc.querySelectorAll('main, section, article').length,
+        headings, semanticTags };
+      const visibleText = doc.body ? doc.body.innerText : '';
+      const inlineEls = [...doc.querySelectorAll('[style]')];
+      const snap = {
+        path, title: doc.title || '', viewport,
+        docHeight: doc.documentElement.scrollHeight,
+        weightBytes: handle.referencedBytes,
+        nav: { hasNavElement: !!doc.querySelector('nav'), styledSignals,
+               linkTargets: [...navLinkTargets].sort() },
+        links, images, media, structure,
+        text: { visibleText, wordCount: visibleText.split(/\s+/).filter(Boolean).length },
+        anchors,
+        inlineStyles: { count: inlineEls.length,
+          tags: [...new Set(inlineEls.map(e => e.tagName.toLowerCase()))] },
+        palette: null, typography: null, spacing: null, responsive: [], css: null,
+        brokenAssets: handle.brokenAssets, externalRefs: handle.externalRefs,
+        timedOut: handle.timedOut
+      };
+      for (const hook of A.analyzerHooks) await hook(handle, snap, submission, opts);
+      return snap;
+    } finally { handle.cleanup(); }
+  };
+
+  A.analyzeSubmission = async (submission, opts = {}) => {
+    const snapshots = {};
+    for (const pg of submission.pages) {
+      try { snapshots[pg.path] = await A.analyzePage(submission, pg.path, opts); }
+      catch (e) { snapshots[pg.path] = { path: pg.path, error: String(e.message || e) }; }
+    }
+    return { snapshots };
+  };
+})();
+</script>
 <script id="module-css"></script>
 <script id="module-checks"></script>
 <script id="module-spell"></script>
