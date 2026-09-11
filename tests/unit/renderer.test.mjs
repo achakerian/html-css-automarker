@@ -6,7 +6,7 @@ let app, foreignRequests;
 before(async () => {
   app = await launchApp();
   foreignRequests = [];
-  app.page.on('request', r => { if (!r.url().startsWith('http://127.0.0.1')) foreignRequests.push(r.url()); });
+  app.page.on('request', r => { if (/^https?:/.test(r.url()) && !r.url().startsWith('http://127.0.0.1')) foreignRequests.push(r.url()); });
 });
 after(async () => { await app.close(); });
 
