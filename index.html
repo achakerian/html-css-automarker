@@ -524,7 +524,93 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
   });
 })();
 </script>
-<script id="module-css"></script>
+<script id="module-css">
+(() => {
+  const A = Automarker;
+  const TAGS_H = /(^|[\s>+~,(])h[1-6]\b/i;
+
+  function parseRules(text) {
+    // Use the browser's CSS parser via a constructable stylesheet
+    const sheet = new CSSStyleSheet();
+    try { sheet.replaceSync(text); } catch { return []; }
+    const out = [];
+    const walk = rules => { for (const r of rules) {
+      if (r instanceof CSSStyleRule)
+        out.push({ selector: r.selectorText, props: [...r.style].map(p => p.toLowerCase()),
+                   style: r.style });
+      else if (r.cssRules) walk(r.cssRules);   // @media etc.
+    } };
+    walk(sheet.cssRules);
+    return out;
+  }
+
+  const finalCompound = sel => sel.trim().split(/\s*[>+~]\s*|\s+/).pop() || '';
+  const isBareTag = (comp, tag) => comp.toLowerCase() === tag;
+
+  function classifySelector(selectorText, rule, doc) {
+    const kinds = new Set();
+    const sels = selectorText.split(',').map(s => s.trim()).filter(Boolean);
+    const finalTags = new Set();
+    for (const sel of sels) {
+      const compounds = sel.split(/\s*[>+~]\s*|\s+/).filter(Boolean);
+      const last = compounds[compounds.length - 1] || '';
+      const lastNoPseudo = last.replace(/::?[a-z-]+(\([^)]*\))?/gi, '');
+      const tagMatch = /^[a-z][a-z0-9]*/i.exec(lastNoPseudo);
+      if (tagMatch) finalTags.add(tagMatch[0].toLowerCase());
+      if (compounds.length >= 2) kinds.add('contextual');
+      if (lastNoPseudo === 'p' || (compounds.length >= 2 && isBareTag(lastNoPseudo, 'p'))) kinds.add('pFormat');
+      if (/^\.[A-Za-z_-][\w-]*$/.test(lastNoPseudo)) kinds.add('classGeneric');
+      if (/^[a-z][a-z0-9]*\.[\w-]+$/i.test(lastNoPseudo)) kinds.add('classScoped');
+      if (TAGS_H.test(' ' + sel)) kinds.add('headingStyle');
+      if (/(^|[\s>+~,])a[^,]*:hover/i.test(' ' + sel)) kinds.add('hoverAnchor');
+      if (isBareTag(lastNoPseudo, 'body') && compounds.length === 1) kinds.add('bodyStyle');
+      if (isBareTag(lastNoPseudo, 'header') && compounds.length === 1) kinds.add('headerStyle');
+      if (isBareTag(lastNoPseudo, 'footer') && compounds.length === 1) kinds.add('footerStyle');
+      const idM = /#([\w-]+)/.exec(lastNoPseudo);
+      if (idM) { const explicit = /^h[1-6]#/i.test(lastNoPseudo);
+        const el = doc && doc.getElementById(idM[1]);
+        if (explicit || (el && /^H[1-6]$/.test(el.tagName))) kinds.add('idOnHeading'); }
+      if (/\bbutton\b/i.test(sel) || /input\[type=["']?(submit|button)/i.test(sel) ||
+          /\.(btn|button)[\w-]*/i.test(sel)) kinds.add('buttonStyle');
+      else if (doc && /^\.[\w-]+$/.test(lastNoPseudo)) {
+        try { if ([...doc.querySelectorAll(lastNoPseudo)]
+          .some(e => e.tagName === 'BUTTON' ||
+            (e.tagName === 'INPUT' && /submit|button/i.test(e.type)))) kinds.add('buttonStyle'); }
+        catch { /* invalid selector */ } }
+    }
+    if (sels.length >= 2 && finalTags.size >= 2) kinds.add('group');
+    const props = rule ? rule.props : [];
+    const val = p => rule ? rule.style.getPropertyValue(p) : '';
+    if (/^(inline-)?flex$/.test(val('display')) ||
+        props.some(p => p.startsWith('flex') || p === 'justify-content' || p === 'align-items'))
+      kinds.add('flexbox');
+    if (/^(relative|absolute|fixed|sticky)$/.test(val('position'))) kinds.add('positioning');
+    return [...kinds];
+  }
+  A.CssAnalyzer = { classifySelector: (sel, rule, doc) => classifySelector(sel, rule, doc), parseRules };
+
+  A.analyzerHooks.push((handle, snap, submission) => {
+    const { doc } = handle;
+    const rules = [];
+    for (const src of handle.cssSources) {
+      for (const r of parseRules(src.text)) {
+        let matches = false;
+        const stripped = r.selector.replace(/::?[a-z-]+(\([^)]*\))?/gi, '') || '*';
+        try { matches = !!doc.querySelector(stripped); } catch { matches = false; }
+        rules.push({ origin: src.origin, source: src.path, selector: r.selector,
+          props: r.props, kinds: classifySelector(r.selector, r, doc), matches });
+      }
+    }
+    const inline = [...doc.querySelectorAll('[style]')].map(el => ({
+      tag: el.tagName.toLowerCase(),
+      props: [...el.style].map(p => p.toLowerCase()) }));
+    snap.css = {
+      external: [...submission.files.keys()].filter(p => /\.css$/i.test(p)).sort(),
+      externalLinkedHere: handle.cssSources.some(s => s.origin === 'external'),
+      rules, inline };
+  });
+})();
+</script>
 <script id="module-checks"></script>
 <script id="module-spell"></script>
 <script id="module-config"></script>
