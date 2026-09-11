@@ -44,3 +44,13 @@ test('submission with no HTML pages reports an error', async () => {
   assert.equal(s.pages.length, 0);
   assert.match(s.errors[0], /no html pages/i);
 });
+
+test('counts distinct linkers, not raw href occurrences', async () => {
+  const s = await load({
+    'x.html': '<a href="z.html">z</a><a href="z.html">z again</a>',
+    'a.html': '<a href="z.html">z</a>',
+    'b.html': '<a href="z.html">z</a>',
+    'z.html': '<p>home</p>'
+  });
+  assert.equal(s.home, 'z.html');
+});

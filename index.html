@@ -121,7 +121,17 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
     const errors = [];
     const pagePaths = [...files.keys()].filter(p => /\.html?$/i.test(p))
       .sort((a, b) => a.localeCompare(b));
-    const pages = pagePaths.map(path => ({ path, html: U.decodeText(files.get(path)) }));
+    const pages = [];
+    for (const path of pagePaths) {
+      let html;
+      try {
+        html = U.decodeText(files.get(path));
+      } catch {
+        errors.push(`Could not decode ${path}`);
+        continue;
+      }
+      pages.push({ path, html });
+    }
     if (pages.length === 0) errors.push('No HTML pages found in this submission.');
 
     let homePath = null;
@@ -131,11 +141,15 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
     else if (pages.length) {
       const inbound = new Map(pagePaths.map(p => [p, 0]));
       for (const pg of pages) {
+        const targets = new Set();
         for (const m of pg.html.matchAll(/href\s*=\s*["']([^"']+)["']/gi)) {
           const t = A.resolvePath(pg.path, m[1]);
           const real = t && lowerIndex.get(t.toLowerCase());
           if (real && inbound.has(real) && real !== pg.path)
-            inbound.set(real, inbound.get(real) + 1);
+            targets.add(real);
+        }
+        for (const target of targets) {
+          inbound.set(target, inbound.get(target) + 1);
         }
       }
       homePath = [...inbound.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0];
