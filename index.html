@@ -483,11 +483,9 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
 
     // spacing
     const kids = [...doc.body.children].filter(e => e.getBoundingClientRect().height > 2);
-    let insetLeft = snap.viewport.w, insetRight = snap.viewport.w, gaps = [];
+    let gaps = [];
     let prevBottom = null;
     for (const el of kids) { const r = el.getBoundingClientRect();
-      insetLeft = Math.min(insetLeft, Math.max(0, r.left));
-      insetRight = Math.min(insetRight, Math.max(0, snap.viewport.w - r.right));
       if (prevBottom !== null) gaps.push(Math.max(0, r.top - prevBottom));
       prevBottom = r.bottom; }
     const sections = [...doc.querySelectorAll('main > *, body > section, body > article, body > div')]
@@ -499,11 +497,15 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
     const mainBlock = kids.sort((a, b) =>
       (b.getBoundingClientRect().width * b.getBoundingClientRect().height) -
       (a.getBoundingClientRect().width * a.getBoundingClientRect().height))[0];
+    // insets are measured from the same largest-area body child used for contentWidthRatio
+    // (mainBlock), not the min over every direct child — a full-bleed header/nav sitting
+    // flush against the viewport edges alongside a centered main content block must not
+    // zero out the inset for an otherwise well-margined page.
+    const mb = mainBlock ? mainBlock.getBoundingClientRect() : null;
     snap.spacing = {
-      insetLeft: Math.round(insetLeft === snap.viewport.w ? 0 : insetLeft),
-      insetRight: Math.round(insetRight === snap.viewport.w ? 0 : insetRight),
-      contentWidthRatio: mainBlock
-        ? +(mainBlock.getBoundingClientRect().width / snap.viewport.w).toFixed(2) : 1,
+      insetLeft: mb ? Math.round(Math.max(0, mb.left)) : 0,
+      insetRight: mb ? Math.round(Math.max(0, snap.viewport.w - mb.right)) : 0,
+      contentWidthRatio: mb ? +(mb.width / snap.viewport.w).toFixed(2) : 1,
       horizontalOverflow: doc.documentElement.scrollWidth > snap.viewport.w + 2,
       sectionGapAvg: allGaps.length
         ? Math.round(allGaps.reduce((a, b) => a + b, 0) / allGaps.length) : 0 };

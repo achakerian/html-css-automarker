@@ -48,6 +48,20 @@ const PLAIN = { 'index.html':
 // relying on PLAIN's deliberate author styles to demonstrate degradation.
 const BARE = { 'index.html':
   '<html><body><p>plain default paragraph text for the bare fixture</p></body></html>' };
+// Full-bleed header flush against both viewport edges, alongside a properly centered/inset
+// main content block — a common, professional layout. insets must be read from the same
+// largest-area body child (mainBlock) used for contentWidthRatio, not the min over every
+// direct body child, or this good design would be wrongly zeroed out by the header.
+const FULL_BLEED_HEADER = { 'index.html': `<html><head><style>
+    body{margin:0}
+    header{margin:0;width:100%;background:#123;height:60px}
+    main{max-width:900px;margin:0 auto;padding:16px}
+  </style></head><body>
+  <header></header>
+  <main><h1>Full bleed header test</h1>
+  <p>Some real content inside a centered main block, to verify the analyzer measures insets
+  from the mainBlock rather than the full-bleed header sitting flush against the edges.</p>
+  </main></body></html>` };
 
 test('design checks pass on the styled page', async () => {
   for (const id of ['colourTheme', 'typography', 'whiteSpace', 'margins', 'sectionStructure']) {
@@ -76,6 +90,11 @@ test('bare page (zero author CSS): UA defaults land in partial bands, not full m
     `typography fraction ${typography._fraction}`); // customFont 0, size 1, contrast 1 → ~2/3
   const colourTheme = await run(BARE, 'colourTheme');
   assert.equal(colourTheme.subResults.find(s => s.id === 'hues').pass, 0);
+});
+
+test('margins: a full-bleed header does not zero out a well-inset main content block', async () => {
+  const r = await run(FULL_BLEED_HEADER, 'margins');
+  assert.equal(r._fraction, 1);
 });
 
 test('images: counts well-sized images, flags stretching, marks relevance for review', async () => {
