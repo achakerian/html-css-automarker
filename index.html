@@ -743,6 +743,144 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
           : `${s.path}: no back-to-top control targeting the page top`)] };
     });
 })();
+(() => {
+  const A = Automarker, { sub, ev, frac, jaccard } = A.checkUtil;
+  const band = (v, full, partial) => v >= full ? 1 : v >= partial ? 0.5 : 0;
+  const live = snaps => Object.values(snaps).filter(s => !s.error);
+  const topColors = s => (s.palette?.colors ?? []).slice(0, 5).map(c => `${c.r},${c.g},${c.b}`);
+
+  A.registerCheck('colourTheme',
+    { label: 'Colour theme blending', scopes: ['home', 'subpages', 'eachPage'],
+      params: [{ key: 'consistency', label: 'Require cross-page consistency', type: 'boolean', default: false }] },
+    ({ snapshot: s, snapshots, params }) => {
+      const p = s.palette ?? { nonDefault: false, distinctHues: 0, highSatHues: 0, colors: [] };
+      const subs = [
+        sub('nonDefault', 'Non-default colours used', p.nonDefault ? 1 : 0),
+        sub('hues', 'Coherent hue count', p.distinctHues >= 1 && p.distinctHues <= 6 ? 1
+          : p.distinctHues <= 8 ? 0.5 : 0),
+        sub('noClash', 'No clashing saturated hues', Math.max(0, 1 - Math.max(0, p.highSatHues - 2) * 0.5)),
+        sub('richness', 'More than two colours', p.colors.length >= 3 ? 1 : p.colors.length === 2 ? 0.5 : 0)
+      ];
+      const evidence = [ev(p.nonDefault ? 'pass' : 'fail',
+        `${s.path}: ${p.colors.length} colour(s), ${p.distinctHues} hue group(s), ${p.highSatHues} high-saturation`)];
+      if (params.consistency) {
+        const counts = new Map();
+        for (const o of live(snapshots)) { const k = JSON.stringify(topColors(o).sort());
+          counts.set(k, (counts.get(k) || 0) + 1); }
+        const modal = JSON.parse([...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? '[]');
+        subs.push(sub('consistent', 'Palette consistent across pages',
+          jaccard(topColors(s), modal)));
+      }
+      return { subResults: subs, evidence };
+    });
+
+  A.registerCheck('typography',
+    { label: 'Fonts, sizes and contrast', scopes: ['home', 'subpages', 'eachPage'], params: [] },
+    ({ snapshot: s }) => {
+      const t = s.typography ?? { defaultFontOnly: true, bodySizePx: 16, contrastRatio: 21, families: [] };
+      const size = t.bodySizePx;
+      return { subResults: [
+          sub('customFont', 'Non-default font family', t.defaultFontOnly ? 0 : 1),
+          sub('size', 'Readable body size (14–20px)',
+            size >= 14 && size <= 20 ? 1 : (size >= 12 && size <= 24 ? 0.5 : 0)),
+          sub('contrast', 'Text contrast ≥ 4.5:1', band(t.contrastRatio, 4.5, 3))
+        ],
+        evidence: [ev(t.defaultFontOnly ? 'fail' : 'pass',
+          `${s.path}: fonts [${t.families.join(', ')}], body ${size}px, contrast ${t.contrastRatio}:1`)] };
+    });
+
+  A.registerCheck('whiteSpace',
+    { label: 'Layout balance and white space', scopes: ['home', 'subpages', 'eachPage'], params: [] },
+    ({ snapshot: s }) => {
+      const sp = s.spacing ?? { horizontalOverflow: true, contentWidthRatio: 1, sectionGapAvg: 0 };
+      return { subResults: [
+          sub('noOverflow', 'No horizontal overflow', sp.horizontalOverflow ? 0 : 1),
+          sub('constrained', 'Content width constrained', sp.contentWidthRatio <= 0.98 ? 1 : 0),
+          sub('gaps', 'Breathing room between sections', band(sp.sectionGapAvg, 12, 6))
+        ],
+        evidence: [ev('info',
+          `${s.path}: width ratio ${sp.contentWidthRatio}, avg section gap ${sp.sectionGapAvg}px${sp.horizontalOverflow ? ', HORIZONTAL OVERFLOW' : ''}`)] };
+    });
+
+  A.registerCheck('margins',
+    { label: 'Page margins', scopes: ['home', 'subpages', 'eachPage'], params: [] },
+    ({ snapshot: s }) => {
+      const sp = s.spacing ?? { insetLeft: 0, insetRight: 0 };
+      const inset = Math.min(sp.insetLeft, sp.insetRight);
+      return { subResults: [sub('inset', 'Content inset from edges', band(inset, 8, 2))],
+        evidence: [ev(inset >= 8 ? 'pass' : 'fail',
+          `${s.path}: content inset ${sp.insetLeft}px left / ${sp.insetRight}px right`)] };
+    });
+
+  A.registerCheck('sectionStructure',
+    { label: 'Clear sections and headings', scopes: ['home', 'subpages', 'eachPage'], params: [] },
+    ({ snapshot: s }) => {
+      const st = s.structure; const h = st.headings;
+      const anyHeading = h.h1 + h.h2 + h.h3 + h.h4 + h.h5 + h.h6 > 0;
+      return { subResults: [
+          sub('sections', '≥ 2 content sections', st.sectionCount >= 2 ? 1 : st.sectionCount === 1 ? 0.5 : 0),
+          sub('headings', 'Heading hierarchy', h.h1 >= 1 && (h.h2 + h.h3) >= 1 ? 1 : anyHeading ? 0.5 : 0),
+          sub('semantic', 'Semantic HTML elements', st.semanticTags.length >= 3 ? 1 : st.semanticTags.length ? 0.5 : 0)
+        ],
+        evidence: [ev('info', `${s.path}: ${st.sectionCount} section(s), h1×${h.h1} h2×${h.h2} h3×${h.h3}, semantic [${st.semanticTags.join(', ')}]`)] };
+    });
+
+  A.registerCheck('images',
+    { label: 'Relevant, well-sized images', scopes: ['home', 'subpages', 'eachPage'],
+      params: [{ key: 'min', label: 'Minimum images', type: 'number', default: 1 },
+               { key: 'minWidth', label: 'Min displayed width (px)', type: 'number', default: 150 },
+               { key: 'relevance', label: 'Check topic relevance', type: 'boolean', default: true }] },
+    ({ snapshot: s, config, params }) => {
+      const min = params.min ?? 1, minW = params.minWidth ?? 150;
+      const good = s.images.filter(i => i.ok && i.displayW >= minW);
+      const subs = [
+        sub('count', `≥ ${min} well-sized image(s)`, Math.min(1, good.length / min), 2),
+        sub('sized', 'Not stretched beyond 1.5× natural size',
+          good.length ? frac(good, i => i.displayW <= i.naturalW * 1.5 + 2) : 0)
+      ];
+      const evidence = [ev(good.length >= min ? 'pass' : 'fail',
+        `${s.path}: ${good.length} of ${min} required image(s) ≥ ${minW}px wide (${s.images.length} total)`)];
+      let needsReview;
+      if (params.relevance !== false) {
+        const kws = (config.topic.keywords || []).map(k => k.toLowerCase());
+        const rel = good.some(i => kws.some(k =>
+          (i.alt || '').toLowerCase().includes(k) || i.raw.toLowerCase().includes(k)));
+        subs.push(sub('relevant', 'Images relevant to topic (confirm visually)', rel ? 1 : 0));
+        needsReview = true;
+        evidence.push(ev('info', 'Image relevance is heuristic — confirm against the preview'));
+      }
+      return { subResults: subs, evidence, needsReview };
+    });
+
+  A.registerCheck('logo',
+    { label: 'Logo presence (top, linked home)', scopes: ['home', 'subpages', 'eachPage'],
+      params: [{ key: 'requireLink', label: 'Link-to-home required for full marks', type: 'boolean', default: false }] },
+    ({ snapshot: s, snapshots, submission, config, params }) => {
+      const re = new RegExp((config.topic.logoHints || ['logo']).join('|'), 'i');
+      const home = submission ? submission.homePath
+        : Object.keys(snapshots).find(p => /(^|\/)index\.html?$/i.test(p));
+      const cands = s.images.filter(i =>
+        i.y < Math.min(300, s.docHeight * 0.25) && (re.test(i.raw) || re.test(i.alt || '')));
+      const linked = cands.some(c => c.linkTarget && c.linkTarget === home);
+      return { subResults: [
+          sub('present', 'Logo image near top of page', cands.length ? 1 : 0, 2),
+          sub('linked', 'Logo links to home', linked ? 1 : 0, params.requireLink ? 2 : 1),
+          sub('placedLeft', 'Logo on the left', cands.some(c => c.x < s.viewport.w / 3) ? 1 : 0, 0.5)
+        ],
+        evidence: [ev(cands.length ? 'pass' : 'fail', cands.length
+          ? `${s.path}: logo "${cands[0].raw}"${linked ? ', linked to home' : ', NOT linked to home'}`
+          : `${s.path}: no image matching [${(config.topic.logoHints || []).join(', ')}] near the top`)] };
+    });
+
+  A.registerCheck('pageWeight',
+    { label: 'Page loads fast (total bytes)', scopes: ['home', 'subpages', 'eachPage'], params: [] },
+    ({ snapshot: s, config }) => {
+      const kb = Math.round(s.weightBytes / 1024);
+      const t = config.meta.weightThresholds || { fullKB: 1536, partialKB: 4096 };
+      return { subResults: [sub('weight', `Page + assets ≤ ${t.fullKB} KB`, band(-kb, -t.fullKB, -t.partialKB))],
+        evidence: [ev(kb <= t.fullKB ? 'pass' : 'fail', `${s.path}: ${kb} KB total`)] };
+    });
+})();
 </script>
 <script id="module-spell"></script>
 <script id="module-config"></script>
