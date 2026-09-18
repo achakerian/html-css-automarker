@@ -145,3 +145,43 @@ docs/superpowers/specs|plans/
 ## 10. Milestones
 
 1. Scaffold (repo, harness, skeleton) → 2. ZipReader → 3. SubmissionLoader → 4. PageRenderer → 5–6. PageAnalyzer (core, then style/responsive metrics) → 7. CssAnalyzer → 8–11. Check catalogue (+ SpellCheck) → 12. Config + presets → 13. ScoringEngine → 14. UI → 15. Builder + exports → 16. E2E fixtures + coverage guard + README.
+
+## 11. As-built notes (2026-09-18)
+
+All 16 milestones shipped; 89 tests green (unit per check/module, e2e fixture
+submissions with exact-score assertions, coverage guard). Deviations from the
+text above, each ruled during execution and reflected in the code and README:
+
+- **IWBS001 design-quality items** ship as `required` + threshold checklist
+  rows, not scored 0–2 items (§6 said "scored 0–2"). The builder can convert
+  them; the README documents shipped behaviour.
+- **Margins scoring** was tightened twice against the original heuristics:
+  full marks require ≥ 16 px inset (Chromium's default 8 px body margin
+  scores partial, not full), and insets are measured from the largest
+  content block so full-bleed headers/navs are not penalised.
+- **navBar coverage** uses a steep slope (`max(0, 1 − 0.4 × missing)`,
+  double weight) so one missing nav link costs ≈ 1 point of 5 after
+  rounding, matching marker intent.
+- **CSS rules carry a `media` context**; selector-type requirements count
+  distinct `selector|source` pairs (an `@media` re-declaration counts once)
+  while unused-CSS detection stays media-aware.
+- **Renderer egress hardening** beyond §3: string- and url-form `@import`
+  handled (local imports inlined one level and analysed; external imports
+  stripped and flagged), non-stylesheet/icon `<link>` rels removed, `srcset`
+  stripped — zero network egress for submission content, regression-tested.
+- **Spell-check hardening**: contraction and curly-apostrophe handling, and
+  dictionary supplements for gaps in the system word list (has/women/held/
+  paid, British spellings, web vocabulary). CSV export neutralises
+  spreadsheet formula injection from submission filenames; zip reading has a
+  cumulative decompression cap.
+
+## 12. Direction (agreed 2026-09-14)
+
+- Rubric JSON is the interchange format; generating it **from assessment
+  briefs via an LLM happens outside the tool** (authoring prompt + schema in
+  the README), keeping the marker deterministic and offline. Unmappable
+  criteria travel in a top-level `_unmapped` list until a `manual` check
+  lands.
+- Planned next (see README roadmap): `manual` check, LMS master-zip
+  ingestion (one zip of all students' submissions, split per student), and
+  a declared-size zip-bomb pre-check.

@@ -8,7 +8,7 @@ is no server and no build step — everything (zip reading, DOM rendering,
 CSS analysis, scoring, CSV/feedback export) runs client-side in
 `index.html`.
 
-**Live URL:** `https://<user>.github.io/<repo>/`
+**Live URL:** https://achakerian.github.io/html-css-automarker/
 
 Two rubrics ship out of the box:
 
@@ -186,6 +186,76 @@ in a loaded page will reproduce it).
 - Deductions (`perInstance` or `flat`) are **not** auto-applied when
   `mode: "assisted"` (currently only `spelling`) — each instance starts
   unconfirmed and contributes 0 until a marker ticks it.
+
+## Generating a rubric with an LLM
+
+The engine is rubric-agnostic on purpose: a rubric is just JSON, so the
+fuzzy work of turning an assessment brief into criteria can happen **outside
+the tool**, once, in an LLM — and the marker itself stays deterministic,
+auditable and fully offline. The workflow:
+
+1. Copy the authoring prompt below into an LLM (Claude or similar), paste
+   your assessment brief/spec underneath it, and ask for the rubric JSON.
+2. In the tool, open **Rubric builder** → paste the JSON into the editor →
+   **Validate**. The validator catches structural mistakes (unknown checks,
+   invalid scopes, point sums that don't add up) — fix and re-validate until
+   it passes.
+3. **Skim the result yourself before marking with it.** The validator cannot
+   catch *semantic* mis-mapping — an LLM wiring "creativity" to
+   `colourTheme`, say. Check that each generated item honestly measures the
+   criterion it claims to.
+4. **Apply**, then mark as normal. Export the JSON to share it with other
+   markers or students.
+
+### Authoring prompt (copy from here)
+
+> Convert the assessment brief below into a rubric config JSON for an
+> HTML/CSS submission automarker. Output ONLY the JSON object, no prose.
+>
+> Rules:
+> - Follow the schema exactly as in the "Config schema" section of the
+>   tool's README: `meta` (id, title, minPages, optionally
+>   totalPoints/mappedMarks), `topic` (keywords, sectionHints,
+>   spellWhitelist, logoHints, locationHints — derive these from the
+>   brief's subject matter), `sections[].items[]`, `deductions[]`.
+> - Every item's `check` MUST be one of the ids in the tool's check
+>   catalogue (navBar, pageCount, brokenResources, externalLink, emailLink,
+>   backToTop, colourTheme, typography, whiteSpace, margins,
+>   sectionStructure, images, logo, pageWeight, cssExternal,
+>   cssSelectorTypes, cssUnused, inlineStyles, wordCount, mediaPresence,
+>   responsive, directions, aesthetic, contentIntro, offerings,
+>   contentRelevance, spelling), used only with its valid scopes and params.
+>   Never invent a check id.
+> - Points-based briefs: give items `max` and make section `points` equal
+>   the expanded sum (`eachSubpage` items count ×(minPages−1), `eachPage`
+>   ×minPages). Checklist briefs: give items `required: true`, with
+>   `params.threshold` below 1.0 only where the brief tolerates near-misses.
+> - Use `mode: "assisted"` for anything a human should confirm (aesthetics,
+>   relevance, anything subjective the catalogue only approximates).
+> - Do NOT shoehorn: if a criterion has no honest mapping (presentation
+>   skills, peer review, creativity, code originality), put a short
+>   description of it in a top-level `"_unmapped"` string array instead of
+>   forcing it onto a check. The marker handles those by hand.
+>
+> [PASTE THE ASSESSMENT BRIEF HERE]
+
+Anything the LLM lists under `"_unmapped"` is preserved by the builder
+(unknown top-level keys pass validation untouched) and is your list of
+criteria to mark manually alongside the tool.
+
+## Roadmap
+
+- **`manual` check** — a catalogue entry that auto-scores nothing and just
+  renders a needs-review row, so generated rubrics can carry human-only
+  criteria (presentation, creativity) *inside* the sheet instead of in
+  `"_unmapped"`.
+- **LMS bulk-export ingestion** — drop the single master zip Moodle/Canvas
+  produces (per-student zips or folders inside) and have it split into one
+  submission per student, with the student's name parsed from the LMS
+  filename convention.
+- **Zip-bomb pre-check** — reject over-expanding entries from the zip's
+  declared sizes *before* decompressing, rather than the current cumulative
+  cap that applies after each entry inflates.
 
 ## Development
 
