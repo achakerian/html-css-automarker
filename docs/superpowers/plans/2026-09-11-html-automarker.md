@@ -2379,7 +2379,7 @@ test('wordlist is embedded and usable', async () => {
 
 test('flags misspellings, accepts inflections, capitals and whitelist', async () => {
   const out = await app.page.evaluate(async () => Automarker.spell.check(
-    'The running shoes arrived quickly. Teh delivery was definately fast. ' +
+    'The running shoes arrived quickly, but teh delivery was definately fast. ' +
     'Adidas and Nike make sneakers. Our WIFI is free. Prices dropped.',
     { topic: { spellWhitelist: ['sneakers'] } }));
   const words = out.map(o => o.word).sort();
@@ -2433,7 +2433,7 @@ test('aesthetic composes design metrics', async () => {
 });
 
 test('spelling check emits instances across pages', async () => {
-  const site = { 'index.html': '<p>Teh best offer</p>', 'a.html': '<p>teh same typo again</p>' };
+  const site = { 'index.html': '<p>simply teh best offer</p>', 'a.html': '<p>teh same typo again</p>' };
   const r = await run(site, 'spelling', {}, null);
   const teh = r.instances.find(i => i.word === 'teh');
   assert.ok(teh); assert.equal(teh.count, 2);
@@ -2991,6 +2991,8 @@ test('scores, expands, pads, deducts and maps', async () => {
 });
 
 test('overrides and spelling confirmation recompute totals', async () => {
+  // clone without the flat 'short' deduction so totals stay above the max(0, …) floor
+  const CFG2 = { ...CFG, deductions: CFG.deductions.filter(d => d.id !== 'short') };
   const r = await app.page.evaluate(async ({ site, cfg }) => {
     const sub = await Automarker.submissionFromTexts('t', site);
     const analysis = await Automarker.analyzeSubmission(sub);
@@ -3005,7 +3007,7 @@ test('overrides and spelling confirmation recompute totals', async () => {
       overridden: sheet.items.find(i => i.id === 'i-nav').overridden,
       reqMet: sheet.requirementsMet,
       spellTotal: sheet.deductions[spellIdx].total };
-  }, { site: SITE, cfg: CFG });
+  }, { site: SITE, cfg: CFG2 });
   assert.equal(r.afterOverride, r.before - 3);
   assert.equal(r.overridden, true);
   assert.equal(r.reqMet, 1);
@@ -3250,7 +3252,7 @@ const page = (t, body) => `<html><head><title>${t}</title><style>
   <body id="top">${NAV()}<main><h1>${t}</h1>${body}</main>
   <a href="#top">Back to top</a></body></html>`;
 const SITE = Object.fromEntries([
-  ['index.html', page('Sport Home', '<p>Welcome to our sport store with shoes and gear. Teh best.</p>')],
+  ['index.html', page('Sport Home', '<p>Welcome to our sport store with shoes and gear, simply teh best.</p>')],
   ...['about', 'products', 'gallery', 'contact', 'reserve']
     .map(n => [`${n}.html`, page(n, `<p>${n} content for the sport store</p>`)])]);
 
@@ -3886,7 +3888,7 @@ git commit -m "feat: CSV/feedback exports and rubric builder with JSON import/ex
 
 `charlieMinimal()` — five unstyled pages (`index.html` + 4), plain `<p>` text, no CSS, no images, minimal cross-links only from index.
 
-`deltaMessy()` — `alphaPerfect()` re-pathed: every file under `My Site Final/`; `gallery.html` renamed `GALLERY.HTM` (other pages keep `href="gallery.html"` → exercises case-insensitive resolution; its own nav uses `index.html` etc. as normal); `about.html` renamed `about page.html` with all links to it as `about%20page.html`; junk entries `__MACOSX/My Site Final/._index.html` and `My Site Final/.DS_Store`.
+`deltaMessy()` — `alphaPerfect()` re-pathed: every file under `My Site Final/`; `gallery.html` renamed `GALLERY.HTML` (same extension, different case — other pages keep `href="gallery.html"` → exercises case-insensitive resolution; its own nav uses `index.html` etc. as normal); `about.html` renamed `about page.html` with all links to it as `about%20page.html`; junk entries `__MACOSX/My Site Final/._index.html` and `My Site Final/.DS_Store`.
 
 `echoPortfolio()` — IWBS001 fully compliant. Three pages `index.html`, `favourites.html`, `place.html` + `css/style.css` + `img/photo.svg`, `img/thing.svg`, `img/place.svg` + `clip.mp4` (tiny stub bytes). Home: `<video src="clip.mp4" controls>` beside a celebrity quote; `<a href="mailto:student@uni.edu.au">email me</a>`; photo image 200px; name + "Student ID: 21234567"; ≥ 620 words across intro/background/hobbies/fun-facts/skills sections; external landmark link. Sub-pages: ≥ 520 words each; an external `https://en.wikipedia.org/...` link each. `css/style.css` linked from all three pages contains (all USED): `p{...}`, three generic classes (`.card .accent .wide`), three tag-scoped (`h2.title p.lead li.item`), three heading styles (`h1 h2 h3`), `a:hover`, two group styles (`h1,h2` and `p,li`), contextual `main p`, `button{...}` + a real `<button>`, `.gallery{display:flex}` used. Every page's embedded `<style>`: `#page-title{...}` (id on its h1), contextual `header nav a{...}`, `p.intro{...}` on a `<p class="intro">` (the brief's "class to format paragraph tags" — kind `classScoped`), `position:relative` rule, `header{...} footer{...} body{...}`. Every page: ≥ 3 inline styles including one `<div style>` and one `<span style>`. Fluid layout (max-width:100%; padding), no fixed widths > 375px.
 
