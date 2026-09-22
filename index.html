@@ -51,6 +51,12 @@ section.sec > h2 { font-size:14px; margin:0; padding:10px 14px;
 .req-toggle { min-width:44px; text-align:center; font-weight:600; }
 .req-toggle.pass { color:var(--pass); } .req-toggle.fail { color:var(--fail); }
 .ded-inst { display:flex; gap:8px; padding:4px 14px; align-items:center; }
+.ev-link { color:var(--accent); text-decoration:underline; cursor:pointer; }
+.ded-inst .ev-link { margin-left:2px; }
+.ai-flag { font-size:11px; color:var(--warn); border:1px solid var(--warn);
+  border-radius:4px; padding:0 4px; margin-left:6px; white-space:nowrap; }
+.sec.authorship h2 span { color:var(--warn); }
+.ai-disclaimer { padding:6px 14px; margin:0; color:var(--muted); font-size:13px; font-style:italic; }
 #preview-modal { position:fixed; inset:3vh 3vw; background:var(--panel);
   border:1px solid var(--line); border-radius:10px; z-index:50; display:flex;
   flex-direction:column; box-shadow:0 12px 40px rgba(0,0,0,.25); }
@@ -727,6 +733,170 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
   });
 })();
 </script>
+<script id="module-authorship">
+(() => {
+  const A = Automarker, U = A.util;
+
+  const stripCssComments = t => t.replace(/\/\*[\s\S]*?\*\//g, '');
+  const linesOf = t => t.replace(/\r/g, '').split('\n');
+
+  function sources(submission) {
+    const html = submission.pages.map(p => ({ path: p.path, text: p.html }));
+    const css = [];
+    for (const p of [...submission.files.keys()].filter(p => /\.css$/i.test(p)).sort()) {
+      try { css.push({ path: p, text: U.decodeText(submission.files.get(p)) }); } catch { /* undecodable */ }
+    }
+    for (const pg of html)
+      for (const m of pg.text.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi))
+        css.push({ path: pg.path, text: m[1] });
+    return { html, css, all: [...html, ...css] };
+  }
+
+  const classNames = ({ html, css }) => {
+    const names = new Set();
+    for (const pg of html)
+      for (const m of pg.text.matchAll(/class\s*=\s*["']([^"']+)["']/gi))
+        for (const n of m[1].trim().split(/\s+/)) if (n) names.add(n);
+    for (const s of css)
+      for (const m of stripCssComments(s.text).matchAll(/\.([A-Za-z_][\w-]*)/g))
+        names.add(m[1]);
+    return [...names];
+  };
+
+  const isBanner = raw => { const t = raw.trim();
+    return /[=*_-]{4,}/.test(t) ||
+      /^(?:[A-Z][A-Za-z]*\s+){0,4}(Section|Styles?|Layout|Reset|Tokens|Variables|Header|Footer|Navigation)$/.test(t); };
+
+  // Stylometric authorship indicators. Purely advisory: each signal is a common
+  // fingerprint of LLM-generated HTML/CSS, but auto-formatters and meticulous
+  // students can trigger the formatting ones — hence per-signal evidence and no
+  // effect on scoring. Small submissions are guarded by minimum-size floors so
+  // a ten-line page can never look "machine-uniform".
+  function analyze(submission) {
+    const src = sources(submission);
+    const signals = [];
+    const add = (id, label, detail) => signals.push({ id, label, detail });
+    const allLines = src.all.flatMap(s => linesOf(s.text));
+    const cssText = src.css.map(s => stripCssComments(s.text)).join('\n');
+    const htmlText = src.html.map(s => s.text).join('\n');
+
+    const indents = []; let tabIndents = 0;
+    for (const ln of allLines) {
+      const m = /^([ \t]+)\S/.exec(ln);
+      if (!m) continue;
+      if (m[1].includes('\t')) tabIndents++; else indents.push(m[1].length);
+    }
+    if (indents.length + tabIndents >= 30 && tabIndents === 0) {
+      let best = { unit: 0, frac: 0 };
+      for (const unit of [4, 2, 3]) {
+        const frac = indents.filter(n => n % unit === 0).length / indents.length;
+        if (frac > best.frac) best = { unit, frac };
+      }
+      if (best.frac >= 0.98)
+        add('indent-uniform', 'Machine-uniform indentation',
+          `${indents.length} indented lines are all exact multiples of ${best.unit} spaces`);
+    }
+
+    if (allLines.length >= 60 && !allLines.some(ln => /[ \t]+$/.test(ln)))
+      add('clean-whitespace', 'No trailing whitespace anywhere',
+        `${allLines.length} lines with zero trailing spaces or tabs`);
+
+    const declLines = [];
+    for (const s of src.css)
+      for (const ln of linesOf(stripCssComments(s.text))) {
+        if (/[{}]/.test(ln)) continue;
+        if (/^\s*[A-Za-z-][\w-]*\s*:/.test(ln)) declLines.push(ln);
+      }
+    if (declLines.length >= 20) {
+      const uniform = declLines.filter(ln => /^[ \t]*[\w-]+: \S.*;\s*$/.test(ln)).length;
+      if (uniform / declLines.length >= 0.98)
+        add('css-decl-uniform', 'Perfectly uniform CSS declarations',
+          `${declLines.length} declarations all formatted "property: value;" with single spacing`);
+    }
+
+    { let closes = 0, spaced = 0;
+      for (const s of src.css) {
+        const lns = linesOf(s.text);
+        lns.forEach((ln, i) => { if (ln.trim() !== '}') return;
+          closes++;
+          if (i + 1 >= lns.length || lns[i + 1].trim() === '') spaced++; });
+      }
+      if (closes >= 8 && spaced / closes >= 0.9)
+        add('css-rule-spacing', 'Blank line between every CSS rule',
+          `${spaced} of ${closes} rules separated by blank lines`); }
+
+    const names = classNames(src);
+    const segs = n => n.split(/[-_]+/).filter(Boolean).length;
+    if (names.length >= 8) {
+      const mean = names.reduce((a, n) => a + segs(n), 0) / names.length;
+      if (mean >= 2.3 || names.filter(n => segs(n) >= 3).length / names.length >= 0.4)
+        add('intricate-classnames', 'Overly intricate class naming',
+          `${names.length} distinct classes averaging ${mean.toFixed(1)} words (e.g. ${
+            [...names].sort((a, b) => b.length - a.length).slice(0, 3).map(n => '.' + n).join(', ')})`);
+    }
+    const bem = names.filter(n => /__|--/.test(n));
+    if (bem.length >= 2)
+      add('bem-naming', 'BEM-style class naming',
+        `${bem.length} BEM-patterned classes (e.g. ${bem.slice(0, 3).map(n => '.' + n).join(', ')})`);
+
+    const banners = [];
+    for (const s of src.css)
+      for (const m of s.text.matchAll(/\/\*([\s\S]*?)\*\//g))
+        if (isBanner(m[1])) banners.push(m[1].replace(/[=*_-]{4,}/g, '').trim());
+    for (const s of src.html)
+      for (const m of s.text.matchAll(/<!--([\s\S]*?)-->/g))
+        if (isBanner(m[1])) banners.push(m[1].trim());
+    if (banners.length >= 3)
+      add('banner-comments', 'Section banner comments',
+        `${banners.length} banner comments (e.g. "${banners[0]}")`);
+
+    const varDecls = cssText.match(/--[\w-]+\s*:/g) ?? [];
+    if (/:root\s*\{/.test(cssText) && varDecls.length >= 3)
+      add('css-variables', 'CSS custom properties',
+        `:root defines ${varDecls.length} custom properties`);
+
+    for (const m of cssText.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const sels = m[1].split(',').map(s => s.trim());
+      if (sels.some(s => s === '*' || /^\*\s*::?(before|after)$/.test(s)) &&
+          /box-sizing|margin\s*:\s*0|padding\s*:\s*0/.test(m[2])) {
+        add('universal-reset', 'Universal reset rule',
+          'A "* { margin/padding/box-sizing }" reset — a professional idiom rarely hand-written by novices');
+        break;
+      }
+    }
+
+    const feats = [
+      ['clamp()', /clamp\s*\(/], ['minmax()', /minmax\s*\(/],
+      ['grid-template-areas', /grid-template-areas/], ['scroll-behavior', /scroll-behavior/],
+      ['backdrop-filter', /backdrop-filter/], ['aspect-ratio', /aspect-ratio\s*:/],
+      ['object-fit', /object-fit\s*:/], ['prefers-* media query', /@media[^{]*prefers-/],
+    ].filter(([, re]) => re.test(cssText)).map(([n]) => n);
+    const transitions = (cssText.match(/transition\s*:/g) ?? []).length;
+    if (transitions >= 5) feats.push(`${transitions} transitions`);
+    if (feats.length >= 2)
+      add('advanced-css', 'Beyond-course-level CSS features', feats.join(', '));
+
+    const aria = (htmlText.match(/\saria-[a-z]+\s*=/gi) ?? []).length;
+    if (aria >= 3)
+      add('aria-density', 'Thorough ARIA labelling', `${aria} aria-* attributes across the site`);
+
+    const imgs = htmlText.match(/<img\b[^>]*>/gi) ?? [];
+    const alts = imgs.map(t => /alt\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(t))
+      .map(m => (m?.[1] ?? m?.[2] ?? '').trim());
+    const meanWords = imgs.length
+      ? alts.reduce((a, s) => a + (s ? s.split(/\s+/).length : 0), 0) / imgs.length : 0;
+    if (imgs.length >= 3 && alts.every(Boolean) && meanWords >= 3)
+      add('alt-thorough', 'Uniformly descriptive alt text',
+        `All ${imgs.length} images have descriptive alt text (mean ${meanWords.toFixed(1)} words)`);
+
+    const level = signals.length >= 6 ? 'strong' : signals.length >= 3 ? 'possible' : 'none';
+    return { signals, checked: 12, level };
+  }
+
+  A.authorship = { analyze,
+    disclaimer: 'Advisory only — auto-formatters and meticulous students can trigger these signals; never treat them as proof.' };
+})();
+</script>
 <script id="module-checks">
 (() => {
   const A = Automarker;
@@ -847,6 +1017,15 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
           ? `${s.path}: back-to-top control found ("${hit.text || hit.href}")`
           : `${s.path}: no back-to-top control targeting the page top`)] };
     });
+
+  // For checklist rows only a human can judge (copyright, submission date, …):
+  // always needs review, defaults to unmet until the marker ticks ✓ met.
+  A.registerCheck('manual',
+    { label: 'Manual verification (marker ticks after checking)',
+      scopes: ['site', 'home', 'subpages', 'eachPage', 'eachSubpage'], params: [] },
+    () => ({ needsReview: true,
+      subResults: [sub('manual', 'Verified by marker', 0)],
+      evidence: [ev('fail', 'Requires manual verification — confirm against the submission, then tick ✓ met')] }));
 })();
 (() => {
   const A = Automarker, { sub, ev, frac, jaccard } = A.checkUtil;
@@ -1213,6 +1392,7 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
         }
       }
       const instances = [...byWord.values()].map(e => ({ word: e.word, count: e.count,
+        pages: [...e.pages],
         text: `Possible misspelling "${e.word}" ×${e.count} (${[...e.pages].join(', ')})` }));
       return { needsReview: true,
         subResults: [sub('none', 'No suspected misspellings', Math.max(0, 1 - instances.length / 10))],
@@ -1294,6 +1474,62 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       logoHints: ['logo', 'brand'],
       locationHints: ['location', 'contact', 'visit', 'find', 'store', 'directions'] },
     sections: [
+      // Part A of the paper marking sheet: a tick-box requirements checklist —
+      // "not scored, informs marks". Every row is `required` (✓/✗, no points);
+      // rows a check can verify pre-tick themselves with evidence, the rest use
+      // the `manual` check and wait for the marker.
+      { id: 'aTech', title: 'A — Submission and technical requirements', items: [
+        { id: 'a-zip', label: 'Single zip with all HTML, CSS, image and other files', check: 'manual', scope: 'site', required: true },
+        { id: 'a-pages', label: 'At least 6 separate HTML files (home + 5 sub-pages)', check: 'pageCount', scope: 'site', required: true, params: { min: 6 } },
+        { id: 'a-reachable', label: 'Every page reachable by links starting from home', check: 'manual', scope: 'site', required: true },
+        { id: 'a-relative', label: 'All links relative (no Z:\\ or C:\\ paths); no external links', check: 'externalLink', scope: 'site', required: true, params: { policy: 'forbidden' } },
+        { id: 'a-handwritten', label: 'Raw HTML/CSS written by hand (cross-check the AI authorship panel)', check: 'manual', scope: 'site', required: true },
+        { id: 'a-allages', label: 'Content suitable for all ages', check: 'manual', scope: 'site', required: true },
+        { id: 'a-copyright', label: 'Images copyright safe (own, AI, Unsplash, Pexels, Pixabay), attributed where required', check: 'manual', scope: 'site', required: true },
+        { id: 'a-ontime', label: 'Submitted by 17 Sep, or 20 Sep with automatic extension', check: 'manual', scope: 'site', required: true } ] },
+      { id: 'aHome', title: 'A — Home page', items: [
+        { id: 'a-home-intro', label: 'Welcoming introduction to La Trobe Sports', check: 'contentIntro', mode: 'assisted', scope: 'home', required: true, params: { min: 50, threshold: 0.5 } },
+        { id: 'a-home-hero', label: 'Hero image or banner', check: 'images', mode: 'assisted', scope: 'home', required: true, params: { min: 1, minWidth: 400, threshold: 0.5 } },
+        { id: 'a-home-tagline', label: 'Short tagline', check: 'manual', scope: 'home', required: true },
+        { id: 'a-home-featured', label: 'Featured products or seasonal promotions', check: 'offerings', mode: 'assisted', scope: 'home', required: true, params: { threshold: 0.5 } },
+        { id: 'a-home-quicklinks', label: 'Quick links to Products, Brands, Reservation, Contact', check: 'navBar', scope: 'home', required: true, params: { threshold: 0.6 } } ] },
+      { id: 'aAbout', title: 'A — About Us page', items: [
+        { id: 'a-about-story', label: 'Story or inspiration behind the store', check: 'manual', scope: 'site', required: true },
+        { id: 'a-about-mission', label: 'Mission: quality sportswear and equipment', check: 'manual', scope: 'site', required: true },
+        { id: 'a-about-lifestyle', label: 'Focus on active lifestyles and sporting communities', check: 'manual', scope: 'site', required: true },
+        { id: 'a-about-service', label: 'Customer service and shopping experience', check: 'manual', scope: 'site', required: true } ] },
+      { id: 'aProducts', title: 'A — Products page', items: [
+        { id: 'a-prod-categories', label: 'Product categories shown (shoes, gym wear, football, basketball, outdoor, accessories, sneakers, bags)', check: 'manual', scope: 'site', required: true },
+        { id: 'a-prod-image', label: 'Each product: image', check: 'manual', scope: 'site', required: true },
+        { id: 'a-prod-name', label: 'Each product: name', check: 'manual', scope: 'site', required: true },
+        { id: 'a-prod-desc', label: 'Each product: brief description', check: 'manual', scope: 'site', required: true },
+        { id: 'a-prod-price', label: 'Each product: price', check: 'manual', scope: 'site', required: true },
+        { id: 'a-prod-brand', label: 'Each product: brand', check: 'manual', scope: 'site', required: true } ] },
+      { id: 'aBrands', title: 'A — Brands & Gallery page', items: [
+        { id: 'a-brands-featured', label: 'Featured sports brands', check: 'manual', scope: 'site', required: true },
+        { id: 'a-brands-showcase', label: 'Product showcase images', check: 'manual', scope: 'site', required: true },
+        { id: 'a-brands-collections', label: 'Sportswear collections', check: 'manual', scope: 'site', required: true },
+        { id: 'a-brands-interior', label: 'Store interior and product displays', check: 'manual', scope: 'site', required: true },
+        { id: 'a-brands-promos', label: 'Promotional banners or seasonal collections', check: 'manual', scope: 'site', required: true } ] },
+      { id: 'aContact', title: 'A — Store Location & Contact page', items: [
+        { id: 'a-contact-address', label: 'Address with directions', check: 'directions', scope: 'site', required: true, params: { threshold: 0.5 } },
+        { id: 'a-contact-hours', label: 'Opening hours', check: 'manual', scope: 'site', required: true },
+        { id: 'a-contact-map', label: 'Map image or screenshot (not live embed)', check: 'manual', scope: 'site', required: true },
+        { id: 'a-contact-phone', label: 'Phone number', check: 'manual', scope: 'site', required: true },
+        { id: 'a-contact-email', label: 'Email address', check: 'emailLink', scope: 'site', required: true } ] },
+      { id: 'aReserve', title: 'A — Reservation / Enquiry page', items: [
+        { id: 'a-res-info', label: 'Info about reserving or enquiring before visiting', check: 'manual', scope: 'site', required: true },
+        { id: 'a-res-contact', label: 'Form: name, email, phone', check: 'manual', scope: 'site', required: true },
+        { id: 'a-res-product', label: 'Form: product name, size, quantity', check: 'manual', scope: 'site', required: true },
+        { id: 'a-res-pickup', label: 'Form: pickup date, additional comments', check: 'manual', scope: 'site', required: true },
+        { id: 'a-res-validation', label: 'Suitable input validation', check: 'manual', scope: 'site', required: true },
+        { id: 'a-res-extras', label: 'Optional extras (newsletter, student discount, stock alert, loyalty)', check: 'manual', scope: 'site', required: true } ] },
+      { id: 'aDesign', title: 'A — Design considerations', items: [
+        { id: 'a-design-nav', label: 'Consistent nav menu on every page', check: 'navBar', scope: 'home', required: true, params: { threshold: 0.6 } },
+        { id: 'a-design-responsive', label: 'Responsive on desktop and mobile', check: 'responsive', scope: 'home', required: true, params: { threshold: 0.5 } },
+        { id: 'a-design-consistent', label: 'Consistent colour scheme and typography', check: 'colourTheme', scope: 'subpages', required: true, params: { consistency: true, threshold: 0.5 } },
+        { id: 'a-design-semantic', label: 'Semantic HTML (header, nav, main, section, footer)', check: 'sectionStructure', scope: 'subpages', required: true, params: { threshold: 0.5 } },
+        { id: 'a-design-cta', label: 'Clear call to action buttons', check: 'cssSelectorTypes', scope: 'site', required: true, params: { requirements: [{ kind: 'buttonStyle', min: 1 }] } } ] },
       { id: 'nav', title: 'Navigation Bar and Links', points: 30, items: [
         { id: 'nav-home', label: 'Nav bar on home page, styled, linking to each sub-page',
           check: 'navBar', mode: 'auto', scope: 'home', max: 5 },
@@ -1614,7 +1850,9 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       const { snapshots } = await A.analyzeSubmission(submission,
         { viewport: config.meta.viewport, responsiveWidths: config.meta.responsiveWidths });
       const sheet = await A.scoring.scoreSubmission({ submission, snapshots }, config);
-      record = { name, submission, snapshots, sheet };
+      let authorship = null;
+      try { authorship = A.authorship.analyze(submission); } catch { /* advisory only — never fail the record */ }
+      record = { name, submission, snapshots, sheet, authorship };
     } catch (e) { record = { name, error: String(e.message || e) }; }
     A.state.records.push(record);
     return record;
@@ -1641,7 +1879,7 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
         ...rowIds.flatMap(id => [`${id}:auto`, `${id}:final`]),
         ...model.sections.map(s => `${s.id}:score`),
         ...model.deductions.map(d => `${d.id}:total`),
-        'overridden', 'total', 'mappedMark', 'requirementsMet', 'requirementsTotal', 'error'];
+        'overridden', 'total', 'mappedMark', 'requirementsMet', 'requirementsTotal', 'aiIndicators', 'error'];
       const lines = [head.map(q).join(',')];
       for (const r of records) {
         if (!r.sheet) { lines.push([q(r.name), ...head.slice(1, -1).map(() => ''), q(r.error)].join(',')); continue; }
@@ -1652,7 +1890,8 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
           ...r.sheet.deductions.map(d => d.total),
           q(r.sheet.items.filter(i => i.overridden).map(i => i.id).join(';')),
           r.sheet.total, r.sheet.mappedMark ?? '',
-          r.sheet.requirementsMet, r.sheet.requirementsTotal, ''].join(','));
+          r.sheet.requirementsMet, r.sheet.requirementsTotal,
+          r.authorship ? r.authorship.signals.length : '', ''].join(','));
       }
       return lines.join('\n') + '\n';
     },
@@ -1796,8 +2035,25 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       side.append(el('div', { class: `rec ${i === activeIdx ? 'active' : ''} ${r.error ? 'error' : ''}`,
         'data-testid': 'record-item',
         onclick: () => { activeIdx = i; renderAll(); } },
-        el('span', {}, r.name), el('span', { class: 'mark' }, String(mark))));
+        el('span', {}, r.name,
+          r.authorship && r.authorship.level !== 'none'
+            ? el('span', { class: 'ai-flag', 'data-testid': 'ai-flag',
+                title: `${r.authorship.signals.length} AI-authorship indicator(s) — advisory only` }, 'AI?')
+            : null),
+        el('span', { class: 'mark' }, String(mark))));
     });
+  }
+
+  const hasPage = (rec, path) => rec.submission.pages.some(p => p.path === path);
+  const pageLink = (path, testid, opts = {}) =>
+    el('a', { href: '#', class: 'ev-link', 'data-testid': testid,
+      onclick: e => { e.preventDefault(); e.stopPropagation(); openPreview(activeIdx, path, opts); } }, path);
+  // Evidence lines conventionally start with "<page path>: " — turn that prefix
+  // into a link that opens the preview on the referenced page.
+  function linkifyLeadingPath(rec, text, testid) {
+    const m = /^([\w./%-]+\.html?)(:\s)([\s\S]*)$/i.exec(text);
+    if (m && hasPage(rec, m[1])) return [pageLink(m[1], testid), m[2] + m[3]];
+    return [text];
   }
 
   function scoreControls(rec, row) {
@@ -1856,7 +2112,8 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
           el('div', { class: 'lbl' }, row.label,
             row.needsReview ? el('span', { class: 'badge' }, 'review') : null,
             el('details', {}, el('summary', {}, 'evidence'),
-              ...row.evidence.map(e2 => el('div', { class: `ev-${e2.level}` }, e2.text)),
+              ...row.evidence.map(e2 => el('div', { class: `ev-${e2.level}` },
+                ...linkifyLeadingPath(rec, e2.text, 'evidence-link'))),
               ...(row.perPage ?? []).map(pp =>
                 el('div', {}, `${pp.path}: ${pp.score}`)))),
           scoreControls(rec, row)));
@@ -1884,14 +2141,35 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
           } });
         cb.checked = inst.confirmed;
         if (ded.mode !== 'assisted') cb.disabled = true;
+        // Instances with a structured page list (spelling) get one link per page,
+        // passing the word so the preview can highlight its occurrences; others
+        // (broken/absolute links) get their leading page path linkified.
+        const kids = inst.pages?.length
+          ? [el('span', {}, inst.text.replace(/\s*\([^)]*\)$/, '')),
+             ...inst.pages.filter(pg => hasPage(rec, pg)).map(pg =>
+               pageLink(pg, 'ded-page-link', inst.word ? { highlight: inst.word } : {}))]
+          : linkifyLeadingPath(rec, inst.text, 'ded-page-link');
         dedBox.append(el('label', { class: 'ded-inst', 'data-ded-id': ded.id, 'data-idx': idx },
-          cb, el('span', {}, inst.text)));
+          cb, el('span', {}, ...kids)));
       });
     }
     d.append(dedBox);
+    if (rec.authorship) {
+      const a = rec.authorship;
+      const aBox = el('section', { class: 'sec authorship', 'data-testid': 'authorship-panel' },
+        el('h2', {}, 'AI authorship indicators',
+          el('span', {}, `${a.signals.length} of ${a.checked} — ${a.level}`)));
+      aBox.append(el('p', { class: 'ai-disclaimer' }, A.authorship.disclaimer));
+      if (a.signals.length === 0)
+        aBox.append(el('div', { class: 'row' }, el('div', { class: 'lbl' }, 'No indicators detected.')));
+      for (const s of a.signals)
+        aBox.append(el('div', { class: 'row' },
+          el('div', { class: 'lbl' }, `${s.label} — ${s.detail}`)));
+      d.append(aBox);
+    }
   }
 
-  async function openPreview(recIdx, path) {
+  async function openPreview(recIdx, path, opts = {}) {
     const rec = A.state.records[recIdx];
     const modal = $('#preview-modal'), tabs = $('#preview-tabs'), body = $('#preview-body');
     modal.hidden = false; tabs.innerHTML = ''; body.innerHTML = '';
@@ -1904,6 +2182,44 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       { width: 1280, height: 800 });
     body.append(previewHandle.iframe);   // moves the iframe out of #render-host
     previewHandle.iframe.style.height = '76vh';
+    // Moving the iframe into the modal reloads its document, so highlight only
+    // after the post-move load — annotating the pre-move document is lost work.
+    if (opts.highlight) previewHandle.iframe.addEventListener('load',
+      () => highlightWord(previewHandle.iframe, opts.highlight), { once: true });
+  }
+
+  // Wrap every whole-word occurrence in the previewed document in a <mark> and
+  // scroll the first one into view. The preview iframe is sandboxed with
+  // allow-same-origin (and no allow-scripts), so its DOM is ours to annotate.
+  function highlightWord(iframe, word) {
+    const doc = iframe.contentDocument;
+    if (!doc || !doc.body) return;
+    const re = new RegExp(`\\b${word.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}\\b`, 'gi');
+    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+    const targets = [];
+    while (walker.nextNode()) {
+      const n = walker.currentNode;
+      if (/^(SCRIPT|STYLE)$/.test(n.parentNode?.nodeName)) continue;
+      re.lastIndex = 0;
+      if (re.test(n.nodeValue)) targets.push(n);
+    }
+    let first = null;
+    for (const node of targets) {
+      const frag = doc.createDocumentFragment(); const s = node.nodeValue; let last = 0;
+      re.lastIndex = 0;   // matchAll clones the regex including its lastIndex
+      for (const m of s.matchAll(re)) {
+        frag.append(doc.createTextNode(s.slice(last, m.index)));
+        const mark = doc.createElement('mark');
+        mark.setAttribute('data-automarker-highlight', '');
+        mark.style.cssText = 'background:#ffe08a;outline:2px solid #b7791f;';
+        mark.textContent = m[0];
+        frag.append(mark); first ??= mark;
+        last = m.index + m[0].length;
+      }
+      frag.append(doc.createTextNode(s.slice(last)));
+      node.parentNode.replaceChild(frag, node);
+    }
+    first?.scrollIntoView({ block: 'center' });
   }
   function closePreview() {
     if (previewHandle) { previewHandle.cleanup(); previewHandle = null; }

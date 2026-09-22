@@ -31,19 +31,39 @@ below for building your own from the in-app JSON rubric builder.
    and scored automatically; a row appears in the sidebar per submission.
 4. Click a submission to see its score sheet: one row per rubric item, with
    the automatic score, supporting evidence, and (for `required` items) a
-   pass/fail toggle.
+   pass/fail toggle. In the `cse1iit-2026s2` rubric the sheet opens with the
+   paper marking sheet's **Part A requirements checklist** — ✓ met / ✗ unmet
+   rows that never score points ("not scored, informs marks"). Rows a check
+   can verify (page count, relative links, email link, responsiveness, …)
+   pre-tick themselves with evidence; human-only rows (copyright,
+   hand-written code, submission date, per-page content) stay unmet until
+   you confirm them.
 5. Rows flagged **needs review** (yellow) come from *assisted* checks —
    heuristics such as "images relevant to the topic" or "professional
    presentation" that the tool can only suggest, not verify. Open the page
    preview (tabs across every page in the submission) and confirm or
-   override each one with the score buttons.
+   override each one with the score buttons. Page paths in evidence lines
+   are links — click one to open the preview on that exact page.
 6. Under **Spelling**, tick the instances that are genuine misspellings —
    deductions apply only once confirmed, so a false positive costs nothing
-   until you say so.
+   until you say so. Each instance links to the page(s) containing the word,
+   and following a spelling link highlights every occurrence in the preview
+   so you can judge it in context.
 7. Export a CSV across every marked submission, or a per-student HTML
    feedback report, from the toolbar. For large batches, export the CSV
    periodically as you go rather than only at the end — it costs nothing and
    protects your marking if the tab crashes or the browser is closed early.
+8. Submissions carrying stylometric fingerprints of AI-generated code —
+   machine-uniform indentation, zero trailing whitespace, intricate or
+   BEM-style class naming, banner comments, `:root` variables, universal
+   resets, beyond-course-level CSS — get an amber **AI?** badge in the
+   sidebar and an **AI authorship indicators** panel at the bottom of the
+   score sheet listing exactly which of the 12 signals fired and why. This
+   is *advisory only*: it never affects the mark, never appears in the
+   student feedback report, and can be triggered by auto-formatters or
+   meticulous students, so treat it as a prompt for a closer look (the CSV's
+   `aiIndicators` column gives the signal count for sorting), never as
+   proof.
 
 ## Quick start — for students
 
@@ -146,6 +166,7 @@ in a loaded page will reproduce it).
 | `externalLink` | External links policy | site, home, eachPage | `policy` (`forbidden`\|`required`), `min` (number) |
 | `emailLink` | Email (`mailto:`) link present | site, home, eachPage | — |
 | `backToTop` | Back-to-top control | home, eachSubpage, eachPage | — |
+| `manual` | Manual verification (marker ticks after checking) | site, home, subpages, eachPage, eachSubpage | — |
 | `colourTheme` | Colour theme blending | home, subpages, eachPage | `consistency` (boolean — cross-page palette match) |
 | `typography` | Fonts, sizes and contrast | home, subpages, eachPage | — |
 | `whiteSpace` | Layout balance and white space | home, subpages, eachPage | — |

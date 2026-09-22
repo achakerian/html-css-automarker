@@ -21,12 +21,16 @@ test('both presets validate cleanly and every check exists', async () => {
   assert.deepEqual(r.missing, []);
 });
 
-test('CSE1IIT expanded points equal 113 (30/23/60)', async () => {
+test('CSE1IIT expanded points equal 113 (30/23/60); Part A sections score 0', async () => {
   const pts = await app.page.evaluate(() => {
     const c = Automarker.presets['cse1iit-2026s2'];
-    return c.sections.map(s => Automarker.Config.expandedSectionPoints(s, c.meta));
+    const exp = s => Automarker.Config.expandedSectionPoints(s, c.meta);
+    return { a: c.sections.filter(s => s.id.startsWith('a')).map(exp),
+             b: c.sections.filter(s => !s.id.startsWith('a')).map(exp) };
   });
-  assert.deepEqual(pts, [30, 23, 60]);
+  assert.deepEqual(pts.b, [30, 23, 60]);
+  assert.equal(pts.a.length, 8);
+  assert.ok(pts.a.every(x => !x), `Part A must expand to 0 points, got ${pts.a}`);
 });
 
 test('validator catches unknown checks, bad scopes, duplicate ids, wrong totals', async () => {

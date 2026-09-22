@@ -13,7 +13,7 @@ test('builder edits config via JSON pane and applies as a custom rubric', async 
   const cfg = JSON.parse(await p.inputValue('[data-testid="builder-json"]'));
   assert.equal(cfg.meta.id, 'cse1iit-2026s2');
   cfg.meta.minPages = 4;
-  cfg.sections = cfg.sections.slice(0, 1);           // nav section only
+  cfg.sections = cfg.sections.filter(s => s.id === 'nav');   // nav section only
   cfg.sections[0].points = 20;                        // 5 + 5×(4−1)
   cfg.meta.totalPoints = 20;
   await p.fill('[data-testid="builder-json"]', JSON.stringify(cfg, null, 2));
