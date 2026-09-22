@@ -839,6 +839,17 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       add('bem-naming', 'BEM-style class naming',
         `${bem.length} BEM-patterned classes (e.g. ${bem.slice(0, 3).map(n => '.' + n).join(', ')})`);
 
+    // "Hero" vocabulary and the full-viewport cover-banner idiom are standard
+    // LLM output but are not taught in the course.
+    const heroNames = names.filter(n => n.toLowerCase().includes('hero'));
+    const heroCss = /(?:min-)?height\s*:\s*100vh/.test(cssText) &&
+      /background-size\s*:\s*cover/.test(cssText);
+    if (heroNames.length || heroCss)
+      add('hero-pattern', 'Hero-section idiom (not taught in course)',
+        heroNames.length
+          ? `${heroNames.length} hero-named class(es) (e.g. ${heroNames.slice(0, 3).map(n => '.' + n).join(', ')})`
+          : 'Full-viewport banner with cover background');
+
     const banners = [];
     for (const s of src.css)
       for (const m of s.text.matchAll(/\/\*([\s\S]*?)\*\//g))
@@ -890,7 +901,7 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
         `All ${imgs.length} images have descriptive alt text (mean ${meanWords.toFixed(1)} words)`);
 
     const level = signals.length >= 6 ? 'strong' : signals.length >= 3 ? 'possible' : 'none';
-    return { signals, checked: 12, level };
+    return { signals, checked: 13, level };
   }
 
   A.authorship = { analyze,
@@ -1018,14 +1029,159 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
           : `${s.path}: no back-to-top control targeting the page top`)] };
     });
 
-  // For checklist rows only a human can judge (copyright, submission date, …):
-  // always needs review, defaults to unmet until the marker ticks ✓ met.
+  // For checklist rows only a human can judge (copyright, submission date, …).
+  // defaultPass makes the row exception-based: pre-ticked ✓ met and silent, the
+  // marker unticks only on a problem — automation must not manufacture clicks.
   A.registerCheck('manual',
     { label: 'Manual verification (marker ticks after checking)',
-      scopes: ['site', 'home', 'subpages', 'eachPage', 'eachSubpage'], params: [] },
-    () => ({ needsReview: true,
-      subResults: [sub('manual', 'Verified by marker', 0)],
-      evidence: [ev('fail', 'Requires manual verification — confirm against the submission, then tick ✓ met')] }));
+      scopes: ['site', 'home', 'subpages', 'eachPage', 'eachSubpage'],
+      params: [{ key: 'defaultPass', label: 'Default to met (untick on exception)', type: 'boolean', default: false }] },
+    ({ params }) => params?.defaultPass
+      ? { subResults: [sub('manual', 'Met unless unticked by marker', 1)],
+          evidence: [ev('pass', 'Assumed met — untick if a problem is found')] }
+      : { needsReview: true,
+          subResults: [sub('manual', 'Verified by marker', 0)],
+          evidence: [ev('fail', 'Requires manual verification — confirm against the submission, then tick ✓ met')] });
+
+  A.registerCheck('reachability',
+    { label: 'Every page reachable by links from home', scopes: ['site'], params: [] },
+    ({ submission, snapshots }) => {
+      const all = submission.pages.map(p => p.path);
+      const seen = new Set([submission.homePath]);
+      const queue = [submission.homePath];
+      while (queue.length) {
+        const s = snapshots[queue.shift()];
+        if (!s || s.error) continue;
+        for (const l of s.links)
+          if (l.internal && l.resolved && all.includes(l.resolved) && !seen.has(l.resolved)) {
+            seen.add(l.resolved); queue.push(l.resolved);
+          }
+      }
+      const unreachable = all.filter(p => !seen.has(p));
+      return { subResults: [sub('reach', 'All pages reachable from home',
+          all.length ? seen.size / all.length : 0)],
+        evidence: unreachable.length
+          ? unreachable.map(p => ev('fail', `${p}: not reachable by links starting from ${submission.homePath}`))
+          : [ev('pass', `All ${all.length} page(s) reachable from ${submission.homePath}`)] };
+    });
+
+  // Generic content probe for checklist rows tied to a specific page: locate the
+  // page by filename/title hint, then count keyword / regex-pattern / image-hint
+  // signals (and optionally a minimum rendered-image count) on it.
+  A.registerCheck('pageContent',
+    { label: 'Page content signals (keywords / patterns / images)', scopes: ['site'],
+      params: [{ key: 'pageHints', label: 'Page name hints', type: 'string' },
+               { key: 'keywords', label: 'Keywords (any)', type: 'string' },
+               { key: 'patterns', label: 'Regex patterns (any)', type: 'string' },
+               { key: 'imgHints', label: 'Image src/alt hints', type: 'string' },
+               { key: 'min', label: 'Minimum signals', type: 'number', default: 1 },
+               { key: 'minImgs', label: 'Minimum images', type: 'number' }] },
+    ({ snapshots, params }) => {
+      const hints = (params.pageHints ?? []).map(h => h.toLowerCase());
+      const cands = livePages(snapshots).filter(p => hints.some(h =>
+        p.path.toLowerCase().includes(h) || p.title.toLowerCase().includes(h)));
+      if (!cands.length) {
+        const subs = [];
+        if (params.keywords || params.patterns || params.imgHints)
+          subs.push(sub('signals', 'Content signals present', 0));
+        if (params.minImgs) subs.push(sub('imgs', `≥ ${params.minImgs} image(s)`, 0));
+        return { subResults: subs.length ? subs : [sub('page', 'Target page found', 0)],
+          evidence: [ev('fail', `No page matching hint(s) [${hints.join(', ')}] found`)] };
+      }
+      const score = p => {
+        const text = p.text.visibleText.toLowerCase();
+        const kwHits = (params.keywords ?? []).filter(k => text.includes(k.toLowerCase()));
+        const patHits = (params.patterns ?? []).filter(rx =>
+          { try { return new RegExp(rx, 'i').test(p.text.visibleText); } catch { return false; } });
+        const imgHits = (params.imgHints ?? []).filter(h => p.images.some(i =>
+          `${i.raw} ${i.alt ?? ''}`.toLowerCase().includes(h.toLowerCase())));
+        const imgCount = p.images.filter(i => i.ok || i.external).length;
+        return { p, kwHits, patHits, imgHits, imgCount,
+          found: kwHits.length + patHits.length + imgHits.length };
+      };
+      const best = cands.map(score).sort((a, b) =>
+        (b.found + Math.min(1, b.imgCount / (params.minImgs || 1))) -
+        (a.found + Math.min(1, a.imgCount / (params.minImgs || 1))))[0];
+      const min = params.min ?? 1;
+      const subs = []; const evidence = [];
+      if (params.keywords || params.patterns || params.imgHints) {
+        subs.push(sub('signals', `≥ ${min} content signal(s)`, Math.min(1, best.found / min)));
+        const hits = [...best.kwHits, ...best.imgHits.map(h => `img:${h}`),
+          ...best.patHits.map(() => 'pattern match')];
+        evidence.push(ev(best.found >= min ? 'pass' : 'fail',
+          `${best.p.path}: ${best.found} of ${min} signal(s) found${hits.length ? ` [${hits.join(', ')}]` : ''}`));
+      }
+      if (params.minImgs) {
+        subs.push(sub('imgs', `≥ ${params.minImgs} image(s)`, Math.min(1, best.imgCount / params.minImgs)));
+        evidence.push(ev(best.imgCount >= params.minImgs ? 'pass' : 'fail',
+          `${best.p.path}: ${best.imgCount} rendered image(s) of ${params.minImgs} required`));
+      }
+      return { subResults: subs, evidence };
+    });
+
+  // Static form inspection: match required field groups against input/select/
+  // textarea type, name, id, placeholder and associated <label> text. With
+  // validation: true, look for constraint signals (required, pattern, typed
+  // inputs) instead. Parses raw page HTML — forms aren't in the snapshots.
+  A.registerCheck('formFields',
+    { label: 'Form fields present (matched by name/label/type)', scopes: ['site'],
+      params: [{ key: 'pageHints', label: 'Page name hints', type: 'string' },
+               { key: 'require', label: 'Field groups (synonym lists)', type: 'string' },
+               { key: 'validation', label: 'Check input validation instead', type: 'boolean', default: false }] },
+    ({ submission, params }) => {
+      const hints = (params.pageHints ?? ['reserv', 'enquir', 'contact']).map(h => h.toLowerCase());
+      let pages = submission.pages.filter(p => hints.some(h => p.path.toLowerCase().includes(h)));
+      if (!pages.length) pages = submission.pages;
+      const controls = []; const pagesWithForms = new Set();
+      for (const pg of pages) {
+        const doc = new DOMParser().parseFromString(pg.html, 'text/html');
+        if (doc.querySelector('form')) pagesWithForms.add(pg.path);
+        for (const c of doc.querySelectorAll('input, select, textarea')) {
+          const label = (c.id && doc.querySelector(`label[for="${CSS.escape(c.id)}"]`)?.textContent)
+            || c.closest('label')?.textContent || '';
+          controls.push({ page: pg.path, el: c,
+            type: (c.getAttribute('type') || c.tagName).toLowerCase(),
+            desc: `${c.getAttribute('type') ?? ''} ${c.name ?? ''} ${c.id ?? ''} ${
+              c.getAttribute('placeholder') ?? ''} ${label}`.toLowerCase() });
+        }
+      }
+      if (params.validation) {
+        const constrained = controls.filter(c => c.el.hasAttribute('required') ||
+          c.el.hasAttribute('pattern') || c.el.hasAttribute('min') || c.el.hasAttribute('max') ||
+          c.el.hasAttribute('maxlength') || /^(email|tel|number|date|url)$/.test(c.type));
+        return { subResults: [sub('validation', '≥ 2 input validation signals',
+            Math.min(1, constrained.length / 2))],
+          evidence: [ev(constrained.length >= 2 ? 'pass' : 'fail',
+            `${constrained.length} constrained control(s) (required/pattern/typed inputs) across [${
+              [...pagesWithForms].join(', ') || 'no form found'}]`)] };
+      }
+      const groups = params.require ?? [];
+      const subsOut = []; const evidence = [];
+      for (const group of groups) {
+        const syns = group.map(s => s.toLowerCase());
+        const hit = controls.find(c => syns.some(s => c.desc.includes(s)));
+        subsOut.push(sub(group[0], `Field "${group[0]}" present`, hit ? 1 : 0));
+        evidence.push(ev(hit ? 'pass' : 'fail', hit
+          ? `${hit.page}: "${group[0]}" field found (${hit.desc.trim().split(/\s+/).slice(0, 3).join(' ')})`
+          : `No field matching [${group.join(', ')}] found`));
+      }
+      return { subResults: subsOut.length ? subsOut : [sub('none', 'No field groups specified', 0)],
+        evidence };
+    });
+
+  // Ties the checklist's "written by hand" row to the authorship analyzer:
+  // quiet pass when no AI fingerprints, review-flagged fail otherwise.
+  A.registerCheck('handAuthored',
+    { label: 'Hand-authored code (no AI fingerprints)', scopes: ['site'], params: [] },
+    ({ submission }) => {
+      const a = A.authorship.analyze(submission);
+      const ok = a.level === 'none';
+      return { needsReview: !ok,
+        subResults: [sub('hand', 'No AI-authorship indicators', ok ? 1 : 0)],
+        evidence: [ev(ok ? 'pass' : 'fail', ok
+          ? `No AI-authorship indicators (${a.signals.length} of ${a.checked} signals)`
+          : `${a.signals.length} of ${a.checked} AI-authorship signals (${a.level}) — see the AI authorship panel`)] };
+    });
 })();
 (() => {
   const A = Automarker, { sub, ev, frac, jaccard } = A.checkUtil;
@@ -1479,51 +1635,74 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       // rows a check can verify pre-tick themselves with evidence, the rest use
       // the `manual` check and wait for the marker.
       { id: 'aTech', title: 'A — Submission and technical requirements', items: [
-        { id: 'a-zip', label: 'Single zip with all HTML, CSS, image and other files', check: 'manual', scope: 'site', required: true },
         { id: 'a-pages', label: 'At least 6 separate HTML files (home + 5 sub-pages)', check: 'pageCount', scope: 'site', required: true, params: { min: 6 } },
-        { id: 'a-reachable', label: 'Every page reachable by links starting from home', check: 'manual', scope: 'site', required: true },
+        { id: 'a-reachable', label: 'Every page reachable by links starting from home', check: 'reachability', scope: 'site', required: true },
         { id: 'a-relative', label: 'All links relative (no Z:\\ or C:\\ paths); no external links', check: 'externalLink', scope: 'site', required: true, params: { policy: 'forbidden' } },
-        { id: 'a-handwritten', label: 'Raw HTML/CSS written by hand (cross-check the AI authorship panel)', check: 'manual', scope: 'site', required: true },
-        { id: 'a-allages', label: 'Content suitable for all ages', check: 'manual', scope: 'site', required: true },
-        { id: 'a-copyright', label: 'Images copyright safe (own, AI, Unsplash, Pexels, Pixabay), attributed where required', check: 'manual', scope: 'site', required: true },
-        { id: 'a-ontime', label: 'Submitted by 17 Sep, or 20 Sep with automatic extension', check: 'manual', scope: 'site', required: true } ] },
+        { id: 'a-handwritten', label: 'Raw HTML/CSS written by hand (no authoring tool / AI)', check: 'handAuthored', scope: 'site', required: true },
+        { id: 'a-allages', label: 'Content suitable for all ages (untick if not)', check: 'manual', scope: 'site', required: true, params: { defaultPass: true } },
+        { id: 'a-copyright', label: 'Images copyright safe, attributed where required (untick if not)', check: 'manual', scope: 'site', required: true, params: { defaultPass: true } },
+        { id: 'a-ontime', label: 'Submitted by 17 Sep, or 20 Sep with automatic extension (untick if late)', check: 'manual', scope: 'site', required: true, params: { defaultPass: true } } ] },
       { id: 'aHome', title: 'A — Home page', items: [
-        { id: 'a-home-intro', label: 'Welcoming introduction to La Trobe Sports', check: 'contentIntro', mode: 'assisted', scope: 'home', required: true, params: { min: 50, threshold: 0.5 } },
-        { id: 'a-home-hero', label: 'Hero image or banner', check: 'images', mode: 'assisted', scope: 'home', required: true, params: { min: 1, minWidth: 400, threshold: 0.5 } },
-        { id: 'a-home-tagline', label: 'Short tagline', check: 'manual', scope: 'home', required: true },
-        { id: 'a-home-featured', label: 'Featured products or seasonal promotions', check: 'offerings', mode: 'assisted', scope: 'home', required: true, params: { threshold: 0.5 } },
+        { id: 'a-home-intro', label: 'Welcoming introduction to La Trobe Sports', check: 'pageContent', scope: 'site', required: true,
+          params: { pageHints: ['index'], keywords: ['welcome', 'welcoming', 'la trobe', 'sport', 'sports', 'store'], min: 2 } },
+        { id: 'a-home-hero', label: 'Hero image or banner', check: 'images', scope: 'home', required: true, params: { min: 1, minWidth: 400, relevance: false, threshold: 0.5 } },
+        { id: 'a-home-tagline', label: 'Short tagline (untick if missing)', check: 'manual', scope: 'home', required: true, params: { defaultPass: true } },
+        { id: 'a-home-featured', label: 'Featured products or seasonal promotions', check: 'pageContent', scope: 'site', required: true,
+          params: { pageHints: ['index'], keywords: ['featured', 'promotion', 'promotions', 'sale', 'discount', 'new arrivals', 'offers'], min: 1 } },
         { id: 'a-home-quicklinks', label: 'Quick links to Products, Brands, Reservation, Contact', check: 'navBar', scope: 'home', required: true, params: { threshold: 0.6 } } ] },
       { id: 'aAbout', title: 'A — About Us page', items: [
-        { id: 'a-about-story', label: 'Story or inspiration behind the store', check: 'manual', scope: 'site', required: true },
-        { id: 'a-about-mission', label: 'Mission: quality sportswear and equipment', check: 'manual', scope: 'site', required: true },
-        { id: 'a-about-lifestyle', label: 'Focus on active lifestyles and sporting communities', check: 'manual', scope: 'site', required: true },
-        { id: 'a-about-service', label: 'Customer service and shopping experience', check: 'manual', scope: 'site', required: true } ] },
+        { id: 'a-about-story', label: 'Story or inspiration behind the store', check: 'pageContent', scope: 'site', required: true,
+          params: { pageHints: ['about'], keywords: ['story', 'began', 'started', 'founded', 'inspiration', 'journey', 'since'], min: 1 } },
+        { id: 'a-about-mission', label: 'Mission: quality sportswear and equipment', check: 'pageContent', scope: 'site', required: true,
+          params: { pageHints: ['about'], keywords: ['mission', 'quality', 'sportswear', 'equipment', 'commitment', 'dedicated'], min: 2 } },
+        { id: 'a-about-lifestyle', label: 'Focus on active lifestyles and sporting communities', check: 'pageContent', scope: 'site', required: true,
+          params: { pageHints: ['about'], keywords: ['active', 'lifestyle', 'lifestyles', 'community', 'communities', 'athletes', 'sporting'], min: 2 } },
+        { id: 'a-about-service', label: 'Customer service and shopping experience', check: 'pageContent', scope: 'site', required: true,
+          params: { pageHints: ['about'], keywords: ['service', 'customer', 'customers', 'experience', 'shopping', 'support', 'friendly'], min: 2 } } ] },
       { id: 'aProducts', title: 'A — Products page', items: [
-        { id: 'a-prod-categories', label: 'Product categories shown (shoes, gym wear, football, basketball, outdoor, accessories, sneakers, bags)', check: 'manual', scope: 'site', required: true },
-        { id: 'a-prod-image', label: 'Each product: image', check: 'manual', scope: 'site', required: true },
-        { id: 'a-prod-name', label: 'Each product: name', check: 'manual', scope: 'site', required: true },
-        { id: 'a-prod-desc', label: 'Each product: brief description', check: 'manual', scope: 'site', required: true },
-        { id: 'a-prod-price', label: 'Each product: price', check: 'manual', scope: 'site', required: true },
-        { id: 'a-prod-brand', label: 'Each product: brand', check: 'manual', scope: 'site', required: true } ] },
+        { id: 'a-prod-categories', label: 'Product categories shown (shoes, gym wear, football, basketball, outdoor, accessories, sneakers, bags)', check: 'pageContent', scope: 'site', required: true,
+          params: { pageHints: ['product'], keywords: ['shoes', 'gym', 'football', 'basketball', 'outdoor', 'accessories', 'sneakers', 'bags'], min: 3 } },
+        { id: 'a-prod-image', label: 'Each product: image', check: 'pageContent', scope: 'site', required: true,
+          params: { pageHints: ['product'], minImgs: 3 } },
+        { id: 'a-prod-name', label: 'Each product: name (untick if missing)', check: 'manual', scope: 'site', required: true, params: { defaultPass: true } },
+        { id: 'a-prod-desc', label: 'Each product: brief description (untick if missing)', check: 'manual', scope: 'site', required: true, params: { defaultPass: true } },
+        { id: 'a-prod-price', label: 'Each product: price', check: 'pageContent', scope: 'site', required: true,
+          params: { pageHints: ['product'], patterns: ['\\$\\s?\\d[\\d.,]*'], min: 1 } },
+        { id: 'a-prod-brand', label: 'Each product: brand', check: 'pageContent', scope: 'site', required: true,
+          params: { pageHints: ['product'], keywords: ['brand', 'brands', 'nike', 'adidas', 'puma', 'asics', 'reebok', 'new balance', 'under armour'], min: 1 } } ] },
       { id: 'aBrands', title: 'A — Brands & Gallery page', items: [
-        { id: 'a-brands-featured', label: 'Featured sports brands', check: 'manual', scope: 'site', required: true },
-        { id: 'a-brands-showcase', label: 'Product showcase images', check: 'manual', scope: 'site', required: true },
-        { id: 'a-brands-collections', label: 'Sportswear collections', check: 'manual', scope: 'site', required: true },
-        { id: 'a-brands-interior', label: 'Store interior and product displays', check: 'manual', scope: 'site', required: true },
-        { id: 'a-brands-promos', label: 'Promotional banners or seasonal collections', check: 'manual', scope: 'site', required: true } ] },
+        { id: 'a-brands-featured', label: 'Featured sports brands', check: 'pageContent', scope: 'site', required: true,
+          params: { pageHints: ['brand', 'gallery'], keywords: ['brand', 'brands', 'nike', 'adidas', 'puma', 'asics', 'reebok'], min: 1 } },
+        { id: 'a-brands-showcase', label: 'Product showcase images', check: 'pageContent', scope: 'site', required: true,
+          params: { pageHints: ['brand', 'gallery'], minImgs: 3 } },
+        { id: 'a-brands-collections', label: 'Sportswear collections', check: 'pageContent', scope: 'site', required: true,
+          params: { pageHints: ['brand', 'gallery'], keywords: ['collection', 'collections', 'sportswear', 'apparel', 'range'], min: 1 } },
+        { id: 'a-brands-interior', label: 'Store interior and product displays (untick if missing)', check: 'manual', scope: 'site', required: true, params: { defaultPass: true } },
+        { id: 'a-brands-promos', label: 'Promotional banners or seasonal collections', check: 'pageContent', scope: 'site', required: true,
+          params: { pageHints: ['brand', 'gallery'], keywords: ['promotion', 'promotions', 'sale', 'seasonal', 'offer', 'offers', 'banner', 'new arrivals'], min: 1 } } ] },
       { id: 'aContact', title: 'A — Store Location & Contact page', items: [
         { id: 'a-contact-address', label: 'Address with directions', check: 'directions', scope: 'site', required: true, params: { threshold: 0.5 } },
-        { id: 'a-contact-hours', label: 'Opening hours', check: 'manual', scope: 'site', required: true },
-        { id: 'a-contact-map', label: 'Map image or screenshot (not live embed)', check: 'manual', scope: 'site', required: true },
-        { id: 'a-contact-phone', label: 'Phone number', check: 'manual', scope: 'site', required: true },
+        { id: 'a-contact-hours', label: 'Opening hours', check: 'pageContent', scope: 'site', required: true,
+          params: { pageHints: ['contact', 'location'], keywords: ['hours', 'open', 'opening'],
+                    patterns: ['\\b\\d{1,2}(:\\d{2})?\\s?(am|pm)\\b', '\\b(mon|tue|wed|thu|fri|sat|sun)[a-z]*\\b'], min: 2 } },
+        { id: 'a-contact-map', label: 'Map image or screenshot (not live embed)', check: 'pageContent', scope: 'site', required: true,
+          params: { pageHints: ['contact', 'location'], imgHints: ['map'], min: 1 } },
+        { id: 'a-contact-phone', label: 'Phone number', check: 'pageContent', scope: 'site', required: true,
+          params: { pageHints: ['contact', 'location'], patterns: ['(\\+?\\d[\\d\\s()-]{7,}\\d)'], min: 1 } },
         { id: 'a-contact-email', label: 'Email address', check: 'emailLink', scope: 'site', required: true } ] },
       { id: 'aReserve', title: 'A — Reservation / Enquiry page', items: [
-        { id: 'a-res-info', label: 'Info about reserving or enquiring before visiting', check: 'manual', scope: 'site', required: true },
-        { id: 'a-res-contact', label: 'Form: name, email, phone', check: 'manual', scope: 'site', required: true },
-        { id: 'a-res-product', label: 'Form: product name, size, quantity', check: 'manual', scope: 'site', required: true },
-        { id: 'a-res-pickup', label: 'Form: pickup date, additional comments', check: 'manual', scope: 'site', required: true },
-        { id: 'a-res-validation', label: 'Suitable input validation', check: 'manual', scope: 'site', required: true },
-        { id: 'a-res-extras', label: 'Optional extras (newsletter, student discount, stock alert, loyalty)', check: 'manual', scope: 'site', required: true } ] },
+        { id: 'a-res-info', label: 'Info about reserving or enquiring before visiting', check: 'pageContent', scope: 'site', required: true,
+          params: { pageHints: ['reserv', 'enquir'], keywords: ['reserve', 'reservation', 'enquiry', 'enquire', 'visit', 'pickup', 'pick up'], min: 2 } },
+        { id: 'a-res-contact', label: 'Form: name, email, phone', check: 'formFields', scope: 'site', required: true,
+          params: { pageHints: ['reserv', 'enquir'], require: [['name'], ['email'], ['phone', 'tel', 'mobile']] } },
+        { id: 'a-res-product', label: 'Form: product name, size, quantity', check: 'formFields', scope: 'site', required: true,
+          params: { pageHints: ['reserv', 'enquir'], require: [['product', 'item'], ['size'], ['quantity', 'qty']] } },
+        { id: 'a-res-pickup', label: 'Form: pickup date, additional comments', check: 'formFields', scope: 'site', required: true,
+          params: { pageHints: ['reserv', 'enquir'], require: [['date', 'pickup'], ['comment', 'comments', 'message', 'notes']] } },
+        { id: 'a-res-validation', label: 'Suitable input validation', check: 'formFields', scope: 'site', required: true,
+          params: { pageHints: ['reserv', 'enquir'], validation: true } },
+        { id: 'a-res-extras', label: 'Optional extras (newsletter, student discount, stock alert, loyalty)', check: 'pageContent', scope: 'site', required: true,
+          params: { pageHints: ['reserv', 'enquir'], keywords: ['newsletter', 'discount', 'stock', 'alert', 'loyalty', 'subscribe'], min: 1 } } ] },
       { id: 'aDesign', title: 'A — Design considerations', items: [
         { id: 'a-design-nav', label: 'Consistent nav menu on every page', check: 'navBar', scope: 'home', required: true, params: { threshold: 0.6 } },
         { id: 'a-design-responsive', label: 'Responsive on desktop and mobile', check: 'responsive', scope: 'home', required: true, params: { threshold: 0.5 } },

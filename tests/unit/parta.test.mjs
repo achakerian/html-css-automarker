@@ -66,8 +66,38 @@ test('Part A rows auto-tick where checkable and stay manual elsewhere', async ()
   assert.equal(rows.pages.passed, true, '6 HTML files → auto-ticked');
   assert.equal(rows.relative.passed, true, 'relative-only links → auto-ticked');
   assert.equal(rows.email.passed, true, 'mailto present → auto-ticked');
-  assert.equal(rows.copyright.passed, false, 'human-only row defaults to unmet');
-  assert.equal(rows.copyright.needsReview, true, 'human-only row flagged for review');
+  assert.equal(rows.copyright.passed, true, 'human-only row is exception-based: pre-ticked met');
+  assert.ok(!rows.copyright.needsReview, 'human-only row must not demand review');
   assert.ok(rows.reqTotal >= 35, 'requirements counter now spans the checklist');
   assert.equal(rows.totalPoints, 113, 'points total untouched by Part A');
+});
+
+test('Part A manufactures no review flags: rows verify or stay silent', async () => {
+  const r = await app.page.evaluate(async site => {
+    const cfg = Automarker.presets['cse1iit-2026s2'];
+    const aItems = cfg.sections.filter(s => s.id.startsWith('a')).flatMap(s => s.items);
+    const sub = await Automarker.submissionFromTexts('t', site);
+    const analysis = await Automarker.analyzeSubmission(sub);
+    const sheet = await Automarker.scoring.scoreSubmission({ submission: sub, ...analysis }, cfg);
+    const aRows = sheet.items.filter(i => i.id.startsWith('a-'));
+    return {
+      zipRow: aItems.some(i => i.id === 'a-zip'),
+      manualRows: aItems.filter(i => i.check === 'manual').map(i => ({ id: i.id, dp: !!(i.params && i.params.defaultPass) })),
+      assistedRows: aItems.filter(i => i.mode === 'assisted').map(i => i.id),
+      reachCheck: aItems.find(i => i.id === 'a-reachable')?.check,
+      handCheck: aItems.find(i => i.id === 'a-handwritten')?.check,
+      reviewFlagged: aRows.filter(i => i.needsReview).map(i => i.id),
+      reachable: aRows.find(i => i.id === 'a-reachable')?.passed,
+      handwritten: aRows.find(i => i.id === 'a-handwritten')?.passed,
+    };
+  }, SITE);
+  assert.equal(r.zipRow, false, 'single-zip row dropped — loading proves it');
+  assert.ok(r.manualRows.length >= 3 && r.manualRows.every(m => m.dp),
+    `every remaining manual row must be defaultPass: ${JSON.stringify(r.manualRows)}`);
+  assert.deepEqual(r.assistedRows, [], 'no Part A row uses assisted mode');
+  assert.equal(r.reachCheck, 'reachability');
+  assert.equal(r.handCheck, 'handAuthored');
+  assert.deepEqual(r.reviewFlagged, [], 'a clean hand-written site must produce zero Part A review flags');
+  assert.equal(r.reachable, true, 'fully nav-linked site → reachable auto-ticked');
+  assert.equal(r.handwritten, true, 'no AI fingerprints → hand-written auto-ticked');
 });

@@ -33,11 +33,15 @@ below for building your own from the in-app JSON rubric builder.
    the automatic score, supporting evidence, and (for `required` items) a
    pass/fail toggle. In the `cse1iit-2026s2` rubric the sheet opens with the
    paper marking sheet's **Part A requirements checklist** — ✓ met / ✗ unmet
-   rows that never score points ("not scored, informs marks"). Rows a check
-   can verify (page count, relative links, email link, responsiveness, …)
-   pre-tick themselves with evidence; human-only rows (copyright,
-   hand-written code, submission date, per-page content) stay unmet until
-   you confirm them.
+   rows that never score points ("not scored, informs marks"). Almost every
+   row verifies itself with evidence: link reachability, page-targeted
+   content signals (About story/mission, product categories and prices,
+   opening hours, phone, map image), reservation form fields and input
+   validation, and "written by hand" (wired to the AI authorship analyzer).
+   The few rows only a human can judge (copyright, all-ages content,
+   submission date) are exception-based — pre-ticked ✓ met, untick only
+   when you spot a problem — so a clean submission demands zero Part A
+   clicks.
 5. Rows flagged **needs review** (yellow) come from *assisted* checks —
    heuristics such as "images relevant to the topic" or "professional
    presentation" that the tool can only suggest, not verify. Open the page
@@ -56,9 +60,10 @@ below for building your own from the in-app JSON rubric builder.
 8. Submissions carrying stylometric fingerprints of AI-generated code —
    machine-uniform indentation, zero trailing whitespace, intricate or
    BEM-style class naming, banner comments, `:root` variables, universal
-   resets, beyond-course-level CSS — get an amber **AI?** badge in the
+   resets, hero-section idioms (not taught in the course),
+   beyond-course-level CSS — get an amber **AI?** badge in the
    sidebar and an **AI authorship indicators** panel at the bottom of the
-   score sheet listing exactly which of the 12 signals fired and why. This
+   score sheet listing exactly which of the 13 signals fired and why. This
    is *advisory only*: it never affects the mark, never appears in the
    student feedback report, and can be triggered by auto-formatters or
    meticulous students, so treat it as a prompt for a closer look (the CSV's
@@ -166,7 +171,11 @@ in a loaded page will reproduce it).
 | `externalLink` | External links policy | site, home, eachPage | `policy` (`forbidden`\|`required`), `min` (number) |
 | `emailLink` | Email (`mailto:`) link present | site, home, eachPage | — |
 | `backToTop` | Back-to-top control | home, eachSubpage, eachPage | — |
-| `manual` | Manual verification (marker ticks after checking) | site, home, subpages, eachPage, eachSubpage | — |
+| `manual` | Manual verification (marker ticks after checking) | site, home, subpages, eachPage, eachSubpage | `defaultPass` (boolean — pre-tick ✓ met, untick on exception) |
+| `reachability` | Every page reachable by links from home | site | — |
+| `pageContent` | Page content signals (keywords / patterns / images) | site | `pageHints`, `keywords`, `patterns`, `imgHints`, `min`, `minImgs` |
+| `formFields` | Form fields present (matched by name/label/type) | site | `pageHints`, `require` (synonym-list groups), `validation` (boolean) |
+| `handAuthored` | Hand-authored code (no AI fingerprints) | site | — |
 | `colourTheme` | Colour theme blending | home, subpages, eachPage | `consistency` (boolean — cross-page palette match) |
 | `typography` | Fonts, sizes and contrast | home, subpages, eachPage | — |
 | `whiteSpace` | Layout balance and white space | home, subpages, eachPage | — |

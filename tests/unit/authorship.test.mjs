@@ -218,12 +218,12 @@ const TINY_PERFECT_SITE = {
 test('AI-styled submission reaches strong with the expected signals', async () => {
   const res = await analyze(AI_SITE);
   assert.equal(res.level, 'strong');
-  assert.equal(res.checked, 12);
+  assert.equal(res.checked, 13);
   assert.ok(res.signals.length >= 6, `expected >= 6 signals, got ${res.signals.length}`);
   const ids = res.signals.map(s => s.id);
   for (const id of ['indent-uniform', 'clean-whitespace', 'css-decl-uniform',
                     'intricate-classnames', 'bem-naming', 'banner-comments',
-                    'css-variables', 'universal-reset', 'advanced-css'])
+                    'css-variables', 'universal-reset', 'advanced-css', 'hero-pattern'])
     assert.ok(ids.includes(id), `expected signal ${id}, got: ${ids.join(', ')}`);
   for (const s of res.signals) {
     assert.ok(s.label && typeof s.label === 'string', `signal ${s.id} needs a label`);
@@ -236,7 +236,7 @@ test('messy hand-written submission yields none', async () => {
   assert.equal(res.level, 'none');
   const ids = res.signals.map(s => s.id);
   for (const id of ['indent-uniform', 'clean-whitespace', 'css-decl-uniform',
-                    'intricate-classnames', 'bem-naming'])
+                    'intricate-classnames', 'bem-naming', 'hero-pattern'])
     assert.ok(!ids.includes(id), `signal ${id} must not fire on messy input`);
 });
 
