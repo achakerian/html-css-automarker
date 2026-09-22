@@ -55,7 +55,7 @@ test('feedbackText is concise: mark line, imperfect rows only, notes appended pe
   }, { site: SITE, cfg: CFG });
   assert.match(text, /alice — Mini/);
   assert.match(text, /Mark: \d+(\.\d+)?\/10/);
-  assert.match(text, /Styling \(5\/5\)/, 'scored section header carries the score');
+  assert.match(text, /Styling \(5\/5 · 100\/100\)/, 'scored section header carries the score and /100 share');
   assert.ok(!/Page weight/.test(text), 'full-mark rows are not listed — concise output');
   assert.match(text, /Requirements \(0\/1 met\)/);
   assert.match(text, /✗ Email link present/, 'unmet required rows are listed');
@@ -79,6 +79,19 @@ test('feedbackText includes the late penalty line only when set', async () => {
   assert.ok(!/[Ll]ate/.test(without));
   assert.match(withLate, /Late: 2 day/);
   assert.match(withLate, /−3 marks/);
+});
+
+test('feedbackText shows the /100 view: overall percent and section shares', async () => {
+  const text = await app.page.evaluate(async ({ site, cfg }) => {
+    const sub = await Automarker.submissionFromTexts('alice', site);
+    const analysis = await Automarker.analyzeSubmission(sub);
+    const sheet = await Automarker.scoring.scoreSubmission({ submission: sub, ...analysis }, cfg);
+    Automarker.scoring.applyOverride(sheet, cfg, 'w', 3);
+    return Automarker.exporter.feedbackText({ name: 'alice', sheet }, cfg);
+  }, { site: SITE, cfg: CFG });
+  assert.match(text, /Overall: 60\/100/, '3/5 points → 60/100');
+  assert.match(text, /Styling \(3\/5 · 60\/100\)/, 'scored section header carries its /100 share');
+  assert.ok(!/Requirements \(0\/1 met\).*100/.test(text), 'point-less sections get no /100 share');
 });
 
 test('CSV carries a lateDays column', async () => {

@@ -30,6 +30,16 @@ test('feedback panel: generated text, per-section notes, late days, copy button'
   let out = await p.inputValue('[data-testid="feedback-text"]');
   assert.match(out, /carol_777 — /);
   assert.match(out, /Mark: [\d.]+\/30/);
+  assert.match(out, /Overall: [\d.]+\/100/);
+
+  // The totals bar and section headers show the /100 display layer.
+  const total = parseFloat(await p.textContent('[data-testid="total-points"]'));
+  const pct = parseFloat(await p.textContent('[data-testid="percent-100"]'));
+  assert.equal(pct, Math.round(total / 113 * 100 * 10) / 10, 'percent = total/113 × 100');
+  const navHeader = await p.evaluate(() =>
+    [...document.querySelectorAll('.sec h2')]
+      .find(h => h.textContent.includes('Navigation'))?.textContent);
+  assert.match(navHeader, /·\s*[\d.]+\/26\.5/, 'nav section shows its share of 100 (30/113 → 26.5)');
 
   // Typing a per-section note folds it into the generated text live.
   await p.fill('[data-row-id="nav-home"] >> xpath=ancestor::section >> [data-testid="sec-note"]',

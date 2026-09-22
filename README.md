@@ -56,7 +56,10 @@ below for building your own from the in-app JSON rubric builder.
    and following a spelling link highlights every occurrence in the preview
    so you can judge it in context.
 7. The **Feedback (copy & paste)** panel at the bottom of the score sheet
-   assembles concise plain text ready for the LMS: the mark line, each
+   assembles concise plain text ready for the LMS: the mark line (with an
+   **Overall: X/100** view — each scored section's header also shows its
+   scaled share of 100, e.g. Navigation `26/30 · 23/26.5`, without touching
+   the document's 113-point scheme), each
    section with only its imperfect rows, and the deductions summary. Every
    section box has a small notes field — anything you type there is
    appended to that section's generated feedback, live. Set **Days late**

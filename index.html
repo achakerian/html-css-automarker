@@ -2014,6 +2014,18 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
             - 1.5 * (sheet.lateDays || 0))) : null;
     },
 
+    // Display-only /100 view. The document's point scheme is untouched — each
+    // scored section's weight is its share of 100, and scores scale into it.
+    percentView(sheet, config) {
+      const tp = config.meta.totalPoints;
+      if (!tp) return null;
+      const r1 = A.util.round1;
+      return { overall: Math.max(0, r1(sheet.total / tp * 100)),
+        sections: Object.fromEntries(sheet.sections.filter(s => s.points).map(s =>
+          [s.id, { weight: r1(s.points / tp * 100),
+                   scaled: r1(s.score / s.points * (s.points / tp * 100)) }])) };
+    },
+
     // Document Part C: "Days late (21 to 25 Sep), 1.5 marks each" — applied to
     // the mapped mark, after the ×30÷113 conversion.
     setLateDays(sheet, config, days) {
@@ -2098,15 +2110,19 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
     feedbackText(record, config) {
       const s = record.sheet, notes = record.notes ?? {};
       const ded = s.deductions.reduce((a, d) => a + d.total, 0);
+      const pv = A.scoring.percentView(s, config);
       const lines = [`${record.name} — ${config.meta.title}`,
         `Mark: ${s.mappedMark ?? s.total}/${config.meta.mappedMarks ?? s.totalPoints ?? ''}` +
         ` (${s.total}${s.totalPoints ? `/${s.totalPoints}` : ''} points${
           ded ? `, ${ded} deduction points` : ''}).` +
-        (s.requirementsTotal ? ` Requirements: ${s.requirementsMet}/${s.requirementsTotal} met.` : '')];
+        (s.requirementsTotal ? ` Requirements: ${s.requirementsMet}/${s.requirementsTotal} met.` : '') +
+        (pv ? ` Overall: ${pv.overall}/100.` : '')];
       if (s.lateDays) lines.push(`Late: ${s.lateDays} day(s), −${A.util.round1(1.5 * s.lateDays)} marks.`);
       for (const sec of s.sections) {
-        lines.push('', sec.points ? `${sec.title} (${sec.score}/${sec.points})`
-                                  : `${sec.title} (${sec.reqMet}/${sec.reqTotal} met)`);
+        const share = pv?.sections[sec.id];
+        lines.push('', sec.points
+          ? `${sec.title} (${sec.score}/${sec.points}${share ? ` · ${share.scaled}/${share.weight}` : ''})`
+          : `${sec.title} (${sec.reqMet}/${sec.reqTotal} met)`);
         for (const row of s.items.filter(i => i.sectionId === sec.id)) {
           if (row.required && !row.passed) lines.push(`✗ ${row.label}`);
           else if (row.max && row.final < row.max) lines.push(`- ${row.label}: ${row.final}/${row.max}`);
@@ -2306,10 +2322,13 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
     // textarea being typed into is never torn down mid-keystroke.
     const fbOut = el('textarea', { 'data-testid': 'feedback-text', readonly: '', class: 'feedback-out' });
     const refreshFeedback = () => { fbOut.value = A.exporter.feedbackText(rec, A.state.config); };
+    const pv = () => A.scoring.percentView(s, A.state.config);
+    const pctEl = pv() ? el('b', { 'data-testid': 'percent-100' }, String(pv().overall)) : null;
     d.append(el('div', { class: 'totals' },
       el('span', {}, 'Points: ', totalEl,
         s.totalPoints ? ` / ${s.totalPoints}` : ''),
       mappedEl ? el('span', {}, 'Mark: ', mappedEl) : '',
+      pctEl ? el('span', {}, 'Overall: ', pctEl, '/100') : '',
       el('span', {}, 'Requirements: ',
         el('b', { 'data-testid': 'req-met' }, `${s.requirementsMet}/${s.requirementsTotal}`)),
       el('label', {}, 'Home: ', el('select', { 'data-testid': 'home-select',
@@ -2332,9 +2351,11 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       el('button', { 'data-testid': 'preview-btn', class: 'primary',
         onclick: () => openPreview(activeIdx, rec.submission.homePath) }, 'Preview pages')));
     for (const sec of s.sections) {
+      const share = pv()?.sections[sec.id];
       const box = el('section', { class: 'sec' },
         el('h2', {}, sec.title,
-          el('span', {}, sec.points ? `${sec.score} / ${sec.points}`
+          el('span', {}, sec.points
+            ? `${sec.score} / ${sec.points}${share ? ` · ${share.scaled}/${share.weight}` : ''}`
             : `${sec.reqMet}/${sec.reqTotal} met`)));
       for (const row of s.items.filter(i => i.sectionId === sec.id)) {
         box.append(el('div', { class: `row ${row.needsReview ? 'needs-review' : ''} ${row.overridden ? 'overridden' : ''}`,
@@ -2368,8 +2389,10 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
             A.scoring.setDeductionConfirmed(s, A.state.config, ded.id, idx, e.target.checked);
             totalEl.textContent = String(s.total);
             if (mappedEl) mappedEl.textContent = String(s.mappedMark);
+            if (pctEl) pctEl.textContent = String(pv().overall);
             dedLabelEl.textContent = `${ded.label} (${ded.total})`;
             dedHeaderEl.textContent = String(s.deductions.reduce((a, x) => a + x.total, 0));
+            refreshFeedback();
             renderSidebar();
           } });
         cb.checked = inst.confirmed;
