@@ -157,6 +157,25 @@ test('handAuthored passes quietly on clean code, flags AI fingerprints for revie
   assert.ok(aiStyled.evidence.some(e => /authorship|signal/i.test(e.text)));
 });
 
+test('externalLink kind param separates drive/absolute paths from external links', async () => {
+  const site = {
+    'index.html': `<a href="about.html">ok</a>
+      <a href="https://example.com">external site</a>
+      <a href="C:\\pics\\page.html">drive path</a>`,
+    'about.html': '<p>a</p>',
+  };
+  const absolute = await run(site, 'externalLink', { policy: 'forbidden', kind: 'absolute' });
+  assert.equal(absolute.instances.length, 1);
+  assert.match(absolute.instances[0].text, /C:\\/);
+
+  const external = await run(site, 'externalLink', { policy: 'forbidden', kind: 'external' });
+  assert.equal(external.instances.length, 1);
+  assert.match(external.instances[0].text, /example\.com/);
+
+  const both = await run(site, 'externalLink', { policy: 'forbidden' });
+  assert.equal(both.instances.length, 2, 'no kind → all instances, unchanged behaviour');
+});
+
 test('manual check with defaultPass is met and silent; without it stays unmet', async () => {
   const silent = await app.page.evaluate(() =>
     Automarker.checks['manual']({ params: { defaultPass: true } }));

@@ -33,7 +33,7 @@ test('alpha-perfect scores 113/113 → 30 with zero deductions', async () => {
   assert.equal(r.mapped, 30);
   assert.equal(r.deds.spelling.n, 0);
   assert.equal(r.deds.broken.n, 0);
-  assert.equal(r.deds.absolute.n, 0);
+  assert.ok(!('absolute' in r.deds), 'absolute-links deduction is not on the marking sheet');
 });
 
 test('bravo-flawed loses exactly the seeded points', async () => {
@@ -45,16 +45,16 @@ test('bravo-flawed loses exactly the seeded points', async () => {
   assert.equal(r.rows['sub-backtotop'].auto, 4);         // none on reserve.html
   assert.equal(r.rows['sub-weight'].auto, 4);            // heavy products.html
   assert.equal(r.deds.broken.total, -4);                 // missing.html + ghost.svg
-  assert.equal(r.deds.absolute.total, -2);               // facebook link
+  assert.equal(r.rows['a-external'].passed, false);      // facebook link → checklist row, not a deduction
   assert.deepEqual([...r.deds.spelling.words].sort(), ['definately', 'recieve', 'teh']);
-  assert.equal(r.total, 109 - 6);                        // 29+23+57 = 109; auto deds −6
+  assert.equal(r.total, 109 - 4);                        // 29+23+57 = 109; auto deds −4 (broken only)
   const confirmed = await app.page.evaluate(() => {
     const rec = Automarker.state.records.at(-1);
     [0, 1, 2].forEach(i => Automarker.scoring.setDeductionConfirmed(
       rec.sheet, Automarker.presets['cse1iit-2026s2'], 'spelling', i, true));
     return rec.sheet.total;
   });
-  assert.equal(confirmed, 100);
+  assert.equal(confirmed, 102);
 });
 
 test('charlie-minimal takes the −15 page deduction and low design scores', async () => {

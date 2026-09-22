@@ -13,8 +13,10 @@ CSS analysis, scoring, CSV/feedback export) runs client-side in
 Two rubrics ship out of the box:
 
 - **`cse1iit-2026s2`** — a 113-point "build a sport-store website" brief
-  (nav, per-page design, images, CSS, spelling/broken-link/absolute-link
-  deductions), mapped to a mark out of 30.
+  mirroring the official marking sheet: Part A requirements checklist,
+  Part B rubric scores (nav, per-page design), and Part C deductions
+  (spelling −1, broken links/images −2, fewer than 6 pages −15, late days
+  −1.5 marks each), mapped to a mark out of 30.
 - **`iwbs001-a2`** — a pass/fail "personal portfolio" brief built entirely
   from `required` checks (every row must be met).
 
@@ -53,11 +55,18 @@ below for building your own from the in-app JSON rubric builder.
    until you say so. Each instance links to the page(s) containing the word,
    and following a spelling link highlights every occurrence in the preview
    so you can judge it in context.
-7. Export a CSV across every marked submission, or a per-student HTML
+7. The **Feedback (copy & paste)** panel at the bottom of the score sheet
+   assembles concise plain text ready for the LMS: the mark line, each
+   section with only its imperfect rows, and the deductions summary. Every
+   section box has a small notes field — anything you type there is
+   appended to that section's generated feedback, live. Set **Days late**
+   in the totals bar to apply the sheet's −1.5-marks-per-day penalty to
+   the mapped mark. Click **Copy** to put the whole thing on the clipboard.
+8. Export a CSV across every marked submission, or a per-student HTML
    feedback report, from the toolbar. For large batches, export the CSV
    periodically as you go rather than only at the end — it costs nothing and
    protects your marking if the tab crashes or the browser is closed early.
-8. Submissions carrying stylometric fingerprints of AI-generated code —
+9. Submissions carrying stylometric fingerprints of AI-generated code —
    machine-uniform indentation, zero trailing whitespace, intricate or
    BEM-style class naming, banner comments, `:root` variables, universal
    resets, hero-section idioms (not taught in the course),
@@ -168,7 +177,7 @@ in a loaded page will reproduce it).
 | `navBar` | Navigation bar (structure, coverage, working links, styling, consistency) | home, eachSubpage, eachPage | — |
 | `pageCount` | Minimum page count | site | `min` (number, default 6) |
 | `brokenResources` | Broken links / images / assets | site | — |
-| `externalLink` | External links policy | site, home, eachPage | `policy` (`forbidden`\|`required`), `min` (number) |
+| `externalLink` | External links policy | site, home, eachPage | `policy` (`forbidden`\|`required`), `min` (number), `kind` (`absolute`\|`external`) |
 | `emailLink` | Email (`mailto:`) link present | site, home, eachPage | — |
 | `backToTop` | Back-to-top control | home, eachSubpage, eachPage | — |
 | `manual` | Manual verification (marker ticks after checking) | site, home, subpages, eachPage, eachSubpage | `defaultPass` (boolean — pre-tick ✓ met, untick on exception) |

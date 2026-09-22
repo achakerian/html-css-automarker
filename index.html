@@ -52,6 +52,10 @@ section.sec > h2 { font-size:14px; margin:0; padding:10px 14px;
 .req-toggle.pass { color:var(--pass); } .req-toggle.fail { color:var(--fail); }
 .ded-inst { display:flex; gap:8px; padding:4px 14px; align-items:center; }
 .ev-link { color:var(--accent); text-decoration:underline; cursor:pointer; }
+.sec-note { width:calc(100% - 28px); margin:6px 14px 10px; padding:6px; min-height:34px;
+  border:1px solid var(--line); border-radius:6px; font:inherit; font-size:13px; resize:vertical; }
+.feedback-out { width:calc(100% - 28px); margin:8px 14px 12px; padding:8px; min-height:240px;
+  border:1px solid var(--line); border-radius:6px; font:12px/1.5 ui-monospace,monospace; resize:vertical; }
 .ded-inst .ev-link { margin-left:2px; }
 .ai-flag { font-size:11px; color:var(--warn); border:1px solid var(--warn);
   border-radius:4px; padding:0 4px; margin-left:6px; white-space:nowrap; }
@@ -984,7 +988,8 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
   A.registerCheck('externalLink',
     { label: 'External links policy', scopes: ['site', 'home', 'eachPage'],
       params: [{ key: 'policy', label: 'forbidden or required', type: 'string', default: 'forbidden' },
-               { key: 'min', label: 'Minimum required', type: 'number', default: 1 }] },
+               { key: 'min', label: 'Minimum required', type: 'number', default: 1 },
+               { key: 'kind', label: 'Limit to "absolute" (drive/root paths) or "external" (other sites)', type: 'string' }] },
     ({ snapshot, snapshots, params }) => {
       const pages = snapshot ? [snapshot] : livePages(snapshots);
       const extLinks = pages.flatMap(s => s.links.filter(l => l.external)
@@ -998,7 +1003,11 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
           evidence: [ev(extLinks.length >= min ? 'pass' : 'fail',
             `${extLinks.length} external link(s) found${extLinks[0] ? ` (e.g. ${extLinks[0].url})` : ''}`)] };
       }
-      const all = [...extLinks, ...extRefs];
+      // The marking sheet splits "all links relative" (drive/root paths) from
+      // "no external links" (other sites) — kind narrows to one family.
+      const kindOf = u => /^(file:|[a-z]:[\\/]|\\\\|\/)/i.test(u.trim()) ? 'absolute' : 'external';
+      const all = [...extLinks, ...extRefs]
+        .filter(e => !params.kind || kindOf(e.url) === params.kind);
       const seen = new Set(); const instances = [];
       for (const e of all) { const k = `${e.page}|${e.url}`; if (seen.has(k)) continue;
         seen.add(k); instances.push({ page: e.page, text: `${e.page}: external/absolute reference "${e.url}"` }); }
@@ -1635,9 +1644,11 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       // rows a check can verify pre-tick themselves with evidence, the rest use
       // the `manual` check and wait for the marker.
       { id: 'aTech', title: 'A — Submission and technical requirements', items: [
+        { id: 'a-zip', label: 'Single zip with all HTML, CSS, image and other files (untick if incomplete)', check: 'manual', scope: 'site', required: true, params: { defaultPass: true } },
         { id: 'a-pages', label: 'At least 6 separate HTML files (home + 5 sub-pages)', check: 'pageCount', scope: 'site', required: true, params: { min: 6 } },
         { id: 'a-reachable', label: 'Every page reachable by links starting from home', check: 'reachability', scope: 'site', required: true },
-        { id: 'a-relative', label: 'All links relative (no Z:\\ or C:\\ paths); no external links', check: 'externalLink', scope: 'site', required: true, params: { policy: 'forbidden' } },
+        { id: 'a-relative', label: 'All links relative (no Z:\\ or C:\\ paths)', check: 'externalLink', scope: 'site', required: true, params: { policy: 'forbidden', kind: 'absolute' } },
+        { id: 'a-external', label: 'No external links', check: 'externalLink', scope: 'site', required: true, params: { policy: 'forbidden', kind: 'external' } },
         { id: 'a-handwritten', label: 'Raw HTML/CSS written by hand (no authoring tool / AI)', check: 'handAuthored', scope: 'site', required: true },
         { id: 'a-allages', label: 'Content suitable for all ages (untick if not)', check: 'manual', scope: 'site', required: true, params: { defaultPass: true } },
         { id: 'a-copyright', label: 'Images copyright safe, attributed where required (untick if not)', check: 'manual', scope: 'site', required: true, params: { defaultPass: true } },
@@ -1744,8 +1755,6 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
         perInstance: -1, check: 'spelling', mode: 'assisted' },
       { id: 'broken', label: 'Broken links / images (−2 each)',
         perInstance: -2, check: 'brokenResources', mode: 'auto' },
-      { id: 'absolute', label: 'Absolute or external links (must be relative; −2 each)',
-        perInstance: -2, check: 'externalLink', mode: 'auto', params: { policy: 'forbidden' } },
       { id: 'pagecount', label: 'Fewer than 6 pages (−15)',
         flat: -15, check: 'pageCount', mode: 'auto' } ]
   };
@@ -1978,7 +1987,7 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
         sections: config.sections.map(s => ({ id: s.id, title: s.title, points: s.points ?? null,
           score: 0, reqTotal: 0, reqMet: 0 })),
         deductions, totalPoints: meta.totalPoints ?? null, total: 0,
-        mappedMark: null, requirementsTotal: 0, requirementsMet: 0 };
+        mappedMark: null, requirementsTotal: 0, requirementsMet: 0, lateDays: 0 };
       A.scoring.recomputeTotals(sheet, config);
       return sheet;
     },
@@ -2001,7 +2010,15 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       sheet.requirementsMet = sheet.sections.reduce((a, s) => a + s.reqMet, 0);
       const m = config.meta;
       sheet.mappedMark = (m.mappedMarks && m.totalPoints)
-        ? Math.max(0, A.util.round1(sheet.total / m.totalPoints * m.mappedMarks)) : null;
+        ? Math.max(0, A.util.round1(sheet.total / m.totalPoints * m.mappedMarks
+            - 1.5 * (sheet.lateDays || 0))) : null;
+    },
+
+    // Document Part C: "Days late (21 to 25 Sep), 1.5 marks each" — applied to
+    // the mapped mark, after the ×30÷113 conversion.
+    setLateDays(sheet, config, days) {
+      sheet.lateDays = Math.max(0, Math.round(days) || 0);
+      A.scoring.recomputeTotals(sheet, config);
     },
 
     applyOverride(sheet, config, rowId, value) {
@@ -2058,7 +2075,7 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
         ...rowIds.flatMap(id => [`${id}:auto`, `${id}:final`]),
         ...model.sections.map(s => `${s.id}:score`),
         ...model.deductions.map(d => `${d.id}:total`),
-        'overridden', 'total', 'mappedMark', 'requirementsMet', 'requirementsTotal', 'aiIndicators', 'error'];
+        'overridden', 'total', 'mappedMark', 'requirementsMet', 'requirementsTotal', 'aiIndicators', 'lateDays', 'error'];
       const lines = [head.map(q).join(',')];
       for (const r of records) {
         if (!r.sheet) { lines.push([q(r.name), ...head.slice(1, -1).map(() => ''), q(r.error)].join(',')); continue; }
@@ -2070,9 +2087,36 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
           q(r.sheet.items.filter(i => i.overridden).map(i => i.id).join(';')),
           r.sheet.total, r.sheet.mappedMark ?? '',
           r.sheet.requirementsMet, r.sheet.requirementsTotal,
-          r.authorship ? r.authorship.signals.length : '', ''].join(','));
+          r.authorship ? r.authorship.signals.length : '',
+          r.sheet.lateDays ?? 0, ''].join(','));
       }
       return lines.join('\n') + '\n';
+    },
+
+    // Concise plain-text feedback for pasting into the LMS: mark line, then per
+    // section the imperfect rows only, each followed by the marker's own note.
+    feedbackText(record, config) {
+      const s = record.sheet, notes = record.notes ?? {};
+      const ded = s.deductions.reduce((a, d) => a + d.total, 0);
+      const lines = [`${record.name} — ${config.meta.title}`,
+        `Mark: ${s.mappedMark ?? s.total}/${config.meta.mappedMarks ?? s.totalPoints ?? ''}` +
+        ` (${s.total}${s.totalPoints ? `/${s.totalPoints}` : ''} points${
+          ded ? `, ${ded} deduction points` : ''}).` +
+        (s.requirementsTotal ? ` Requirements: ${s.requirementsMet}/${s.requirementsTotal} met.` : '')];
+      if (s.lateDays) lines.push(`Late: ${s.lateDays} day(s), −${A.util.round1(1.5 * s.lateDays)} marks.`);
+      for (const sec of s.sections) {
+        lines.push('', sec.points ? `${sec.title} (${sec.score}/${sec.points})`
+                                  : `${sec.title} (${sec.reqMet}/${sec.reqTotal} met)`);
+        for (const row of s.items.filter(i => i.sectionId === sec.id)) {
+          if (row.required && !row.passed) lines.push(`✗ ${row.label}`);
+          else if (row.max && row.final < row.max) lines.push(`- ${row.label}: ${row.final}/${row.max}`);
+        }
+        if (notes[sec.id]?.trim()) lines.push(notes[sec.id].trim());
+      }
+      const dedParts = s.deductions.filter(d => d.total)
+        .map(d => `${d.label.replace(/\s*\(.*\)$/, '')}: ${d.total}`);
+      lines.push('', dedParts.length ? `Deductions: ${dedParts.join('; ')}.` : 'Deductions: none.');
+      return lines.join('\n');
     },
 
     feedbackHTML(record, config) {
@@ -2258,6 +2302,10 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
     const totalEl = el('b', { 'data-testid': 'total-points' }, String(s.total));
     const mappedEl = s.mappedMark !== null
       ? el('b', { 'data-testid': 'mapped-mark' }, String(s.mappedMark)) : null;
+    // Assembled copy-paste feedback; refreshed in place on note input so the
+    // textarea being typed into is never torn down mid-keystroke.
+    const fbOut = el('textarea', { 'data-testid': 'feedback-text', readonly: '', class: 'feedback-out' });
+    const refreshFeedback = () => { fbOut.value = A.exporter.feedbackText(rec, A.state.config); };
     d.append(el('div', { class: 'totals' },
       el('span', {}, 'Points: ', totalEl,
         s.totalPoints ? ` / ${s.totalPoints}` : ''),
@@ -2278,6 +2326,9 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
           if (pg.path === rec.submission.homePath) o.selected = true;
           return o;
         }))),
+      el('label', {}, 'Days late: ', el('input', { type: 'number', min: '0',
+        'data-testid': 'late-days', value: String(s.lateDays || 0), style: 'width:52px',
+        onchange: e => { A.scoring.setLateDays(s, A.state.config, +e.target.value); renderAll(); } })),
       el('button', { 'data-testid': 'preview-btn', class: 'primary',
         onclick: () => openPreview(activeIdx, rec.submission.homePath) }, 'Preview pages')));
     for (const sec of s.sections) {
@@ -2297,7 +2348,10 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
                 el('div', {}, `${pp.path}: ${pp.score}`)))),
           scoreControls(rec, row)));
       }
-      box.append(...[]);
+      box.append(el('textarea', { class: 'sec-note', 'data-testid': 'sec-note',
+        placeholder: 'Personalised feedback for this section (appended to the copy & paste text)…',
+        oninput: e => { (rec.notes ??= {})[sec.id] = e.target.value; refreshFeedback(); } },
+        rec.notes?.[sec.id] ?? ''));
       d.append(box);
     }
     const dedHeaderEl = el('span', {}, String(s.deductions.reduce((a, x) => a + x.total, 0)));
@@ -2346,6 +2400,14 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
           el('div', { class: 'lbl' }, `${s.label} — ${s.detail}`)));
       d.append(aBox);
     }
+    refreshFeedback();
+    d.append(el('section', { class: 'sec' },
+      el('h2', {}, 'Feedback (copy & paste)',
+        el('button', { 'data-testid': 'copy-feedback', class: 'primary', onclick: () => {
+          fbOut.select();
+          navigator.clipboard?.writeText(fbOut.value).catch(() => {});
+        } }, 'Copy')),
+      fbOut));
   }
 
   async function openPreview(recIdx, path, opts = {}) {

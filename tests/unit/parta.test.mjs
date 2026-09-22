@@ -81,7 +81,10 @@ test('Part A manufactures no review flags: rows verify or stay silent', async ()
     const sheet = await Automarker.scoring.scoreSubmission({ submission: sub, ...analysis }, cfg);
     const aRows = sheet.items.filter(i => i.id.startsWith('a-'));
     return {
-      zipRow: aItems.some(i => i.id === 'a-zip'),
+      zipRow: aItems.find(i => i.id === 'a-zip'),
+      relativeKind: aItems.find(i => i.id === 'a-relative')?.params?.kind,
+      externalRow: aItems.find(i => i.id === 'a-external')?.params?.kind,
+      dedIds: cfg.deductions.map(d => d.id),
       manualRows: aItems.filter(i => i.check === 'manual').map(i => ({ id: i.id, dp: !!(i.params && i.params.defaultPass) })),
       assistedRows: aItems.filter(i => i.mode === 'assisted').map(i => i.id),
       reachCheck: aItems.find(i => i.id === 'a-reachable')?.check,
@@ -91,7 +94,12 @@ test('Part A manufactures no review flags: rows verify or stay silent', async ()
       handwritten: aRows.find(i => i.id === 'a-handwritten')?.passed,
     };
   }, SITE);
-  assert.equal(r.zipRow, false, 'single-zip row dropped — loading proves it');
+  assert.ok(r.zipRow && r.zipRow.params?.defaultPass,
+    'single-zip row on the document → present, exception-based');
+  assert.equal(r.relativeKind, 'absolute', 'document row: all links relative (drive paths)');
+  assert.equal(r.externalRow, 'external', 'document row: no external links');
+  assert.deepEqual(r.dedIds, ['spelling', 'broken', 'pagecount'],
+    'deductions match the document Part C — no extra absolute-links deduction');
   assert.ok(r.manualRows.length >= 3 && r.manualRows.every(m => m.dp),
     `every remaining manual row must be defaultPass: ${JSON.stringify(r.manualRows)}`);
   assert.deepEqual(r.assistedRows, [], 'no Part A row uses assisted mode');
