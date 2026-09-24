@@ -2105,40 +2105,63 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       return lines.join('\n') + '\n';
     },
 
-    // Clean plain-text feedback for pasting into the LMS: name/title header,
-    // then only the sections needing attention (imperfect rows as dashed
-    // criteria, marker notes in place), deductions if any, total block last.
+    // Excel-ready feedback: tab-separated Criteria / Mark / Comments rows that
+    // paste straight into spreadsheet cells. Every criterion is listed; the
+    // comments column carries the first failure evidence for imperfect rows
+    // and the marker's per-section notes on the section row.
     feedbackText(record, config) {
       const s = record.sheet, notes = record.notes ?? {};
       const pv = A.scoring.percentView(s, config);
-      const lines = [record.name, config.meta.title, ''];
+      // One cell: no tabs/newlines, and neutralise leading formula characters.
+      const cell = v => { let t = String(v ?? '').replace(/[\t\n\r]+/g, ' ').trim();
+        if (/^[=+\-@]/.test(t)) t = `'${t}`; return t; };
+      const lines = [cell(record.name), cell(config.meta.title), 'Criteria\tMark\tComments'];
+      const row = (c, m, com = '') => lines.push(`${cell(c)}\t${cell(m)}\t${cell(com)}`);
       for (const sec of s.sections) {
-        const rows = s.items.filter(i => i.sectionId === sec.id);
-        const flaws = rows.filter(r => (r.required && !r.passed) || (r.max && r.final < r.max));
-        const note = notes[sec.id]?.trim();
-        if (!flaws.length && !note) continue;
-        const title = sec.title.replace(/^A — /, '');
-        lines.push(sec.points ? `${title} (${sec.score}/${sec.points})`
-                              : `${title} (${sec.reqMet}/${sec.reqTotal} met)`);
-        for (const row of flaws)
-          lines.push(row.required ? ` - ${row.label}: not met`
-                                  : ` - ${row.label}: ${row.final}/${row.max}`);
-        if (note) lines.push(note);
+        row(sec.title.replace(/^A — /, ''),
+          sec.points ? `${sec.score}/${sec.points}` : `${sec.reqMet}/${sec.reqTotal} met`,
+          notes[sec.id] ?? '');
+        for (const r of s.items.filter(i => i.sectionId === sec.id)) {
+          const imperfect = (r.required && !r.passed) || (r.max && r.final < r.max);
+          row(r.label, r.required ? (r.passed ? '✓' : '✗') : `${r.final}/${r.max}`,
+            imperfect ? (r.evidence.find(e => e.level === 'fail')?.text ?? '') : '');
+        }
       }
       const deds = s.deductions.filter(d => d.total);
       if (deds.length) {
-        lines.push(`Deductions (${deds.reduce((a, d) => a + d.total, 0)})`);
-        for (const d of deds) lines.push(` - ${d.label.replace(/\s*\(.*\)$/, '')}: ${d.total}`);
+        row('Deductions', `−${-deds.reduce((a, d) => a + d.total, 0)}`);
+        for (const d of deds) row(d.label.replace(/\s*\(.*\)$/, ''), `−${-d.total}`,
+          d.instances.filter(i => i.confirmed).map(i => i.text).join('; '));
       }
-      if (lines.length === 3) lines.push('All rubric criteria met.');
-      lines.push('');
-      if (s.lateDays) lines.push(`Late: ${s.lateDays} day(s), −${A.util.round1(1.5 * s.lateDays)} marks`);
+      if (s.lateDays) row('Late', `${s.lateDays} day(s)`, `−${A.util.round1(1.5 * s.lateDays)} marks`);
       const pts = `${s.total}${s.totalPoints ? `/${s.totalPoints}` : ''} points`;
-      lines.push(s.mappedMark != null
-        ? `Total: ${s.mappedMark}/${config.meta.mappedMarks} (${pts}${pv ? ` · ${pv.overall}/100` : ''})`
-        : `Total: ${pts}${pv ? ` (${pv.overall}/100)` : ''}`);
-      if (s.requirementsTotal) lines.push(`Requirements: ${s.requirementsMet}/${s.requirementsTotal} met`);
+      row('Total', s.mappedMark != null
+        ? `${s.mappedMark}/${config.meta.mappedMarks} (${pts}${pv ? ` · ${pv.overall}/100` : ''})`
+        : `${pts}${pv ? ` (${pv.overall}/100)` : ''}`);
       return lines.join('\n');
+    },
+
+    // Batch report for the unit coordinator: AI/template-usage indicators per
+    // submission, most-flagged first, with the fired signals detailed for any
+    // flagged submission. Advisory framing throughout — indicators, not verdicts.
+    coordinatorReport(records, config) {
+      const rows = records.map(r => ({ name: r.name, error: r.error, a: r.authorship ?? null }))
+        .sort((x, y) => (y.a?.signals.length ?? -1) - (x.a?.signals.length ?? -1));
+      const summary = rows.map(r => `<tr><td>${esc(r.name)}</td><td align="center">${
+        r.a ? `${r.a.signals.length} of ${r.a.checked}` : '—'}</td><td align="center">${
+        r.a ? r.a.level : (r.error ? 'not analysed' : '—')}</td></tr>`).join('');
+      const details = rows.filter(r => r.a && r.a.level !== 'none').map(r => `
+        <h2>${esc(r.name)} — ${r.a.signals.length} of ${r.a.checked} indicators (${r.a.level})</h2>
+        <ul>${r.a.signals.map(sig => `<li><b>${esc(sig.label)}</b> — ${esc(sig.detail)}</li>`).join('')}</ul>`).join('');
+      return `<!DOCTYPE html><html><head><meta charset="utf-8">
+        <title>AI / template usage report</title>
+        <style>body{font:14px/1.5 system-ui;margin:24px;max-width:900px}
+        table{border-collapse:collapse;margin:12px 0}td,th{border:1px solid #ccc;padding:4px 10px;text-align:left}</style></head>
+        <body><h1>AI / template usage report</h1>
+        <p>${esc(config.meta.title)} — ${records.length} submission(s)</p>
+        <p><em>${esc(A.authorship.disclaimer)}</em></p>
+        <table><tr><th>Submission</th><th>Indicators</th><th>Level</th></tr>${summary}</table>
+        ${details}</body></html>`;
     },
 
     feedbackHTML(record, config) {
@@ -2225,6 +2248,9 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
           const r = A.state.records[activeIdx];
           if (r && r.sheet) A.exporter.download(`${r.name}-feedback.html`,
             A.exporter.feedbackHTML(r, A.state.config), 'text/html'); } }, 'Feedback report'),
+        el('button', { 'data-testid': 'ai-report', onclick: () =>
+          A.exporter.download('ai-usage-report.html',
+            A.exporter.coordinatorReport(A.state.records, A.state.config), 'text/html') }, 'AI report'),
         el('button', { 'data-testid': 'open-builder', onclick: openBuilder }, 'Rubric builder')),
       el('div', { class: 'layout' },
         el('div', { id: 'sidebar' }), el('div', { id: 'detail' })),

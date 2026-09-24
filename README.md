@@ -56,15 +56,20 @@ below for building your own from the in-app JSON rubric builder.
    and following a spelling link highlights every occurrence in the preview
    so you can judge it in context.
 7. The **Feedback (copy & paste)** panel at the bottom of the score sheet
-   assembles concise plain text ready for the LMS: the mark line (with an
-   **Overall: X/100** view — each scored section's header also shows its
-   scaled share of 100, e.g. Navigation `26/30 · 23/26.5`, without touching
-   the document's 113-point scheme), each
-   section with only its imperfect rows, and the deductions summary. Every
-   section box has a small notes field — anything you type there is
-   appended to that section's generated feedback, live. Set **Days late**
-   in the totals bar to apply the sheet's −1.5-marks-per-day penalty to
-   the mapped mark. Click **Copy** to put the whole thing on the clipboard.
+   assembles a tab-separated **Criteria / Mark / Comments** table that
+   pastes straight into Excel or Google Sheets cells: one row per rubric
+   criterion (✓/✗ for requirements, `1/2` for scored rows, first failure
+   evidence in Comments), section rows carrying subtotals and your notes,
+   deduction rows when nonzero, and a final `Total` row with the /30 mark,
+   points, and the /100 view (each scored section's in-app header also
+   shows its scaled share of 100, e.g. Navigation `26/30 · 23/26.5`).
+   Every section box has a small notes field — anything you type lands in
+   that section row's Comments cell, live. Set **Days late** in the totals
+   bar to apply the sheet's −1.5-marks-per-day penalty to the mapped mark.
+   Click **Copy** to put the whole table on the clipboard. The **AI
+   report** toolbar button downloads a coordinator-ready HTML summary of
+   AI/template-usage indicators across the whole batch, most-flagged
+   first, with each flagged submission's fired signals detailed.
 8. Export a CSV across every marked submission, or a per-student HTML
    feedback report, from the toolbar. For large batches, export the CSV
    periodically as you go rather than only at the end — it costs nothing and

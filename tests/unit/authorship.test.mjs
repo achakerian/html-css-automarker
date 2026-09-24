@@ -317,6 +317,28 @@ test('UI shows a sidebar AI badge and an advisory detail panel', async () => {
   assert.match(panel, /never treat them as proof/i);
 });
 
+test('coordinatorReport summarises AI/template usage across the batch', async () => {
+  const html = await app.page.evaluate(async ({ ai, messy }) => {
+    const mk = async (name, site) => {
+      const sub = await Automarker.submissionFromTexts(name, site);
+      return { name, submission: sub, authorship: Automarker.authorship.analyze(sub) };
+    };
+    const records = [await mk('clean_student', messy), await mk('suspect_<img src=x>', ai),
+      { name: 'broken_zip', error: 'Not a zip file' }];
+    return Automarker.exporter.coordinatorReport(records, Automarker.state.config);
+  }, { ai: AI_SITE, messy: MESSY_SITE });
+  assert.match(html, /AI \/ template usage/i, 'report is titled for the coordinator');
+  assert.match(html, /suspect_/); assert.match(html, /strong/);
+  assert.match(html, /clean_student/); assert.match(html, /none/);
+  assert.match(html, /Machine-uniform indentation/, 'flagged submissions list their fired signals');
+  assert.match(html, /hero/i, 'hero/template signal surfaces when fired');
+  assert.match(html, /advisory/i, 'disclaimer included');
+  assert.match(html, /broken_zip/, 'unanalysable submissions still listed');
+  assert.ok(html.indexOf('suspect_') < html.indexOf('clean_student'),
+    'most-flagged submissions listed first');
+  assert.ok(!html.includes('<img src=x>'), 'submission names are HTML-escaped');
+});
+
 test('style blocks inside HTML count as CSS sources', async () => {
   const res = await analyze({
     'index.html': `<html>

@@ -26,10 +26,11 @@ test('feedback panel: generated text, per-section notes, late days, copy button'
   await p.click('[data-testid="record-item"]');
   await p.waitForSelector('[data-testid="feedback-text"]');
 
-  // Generated feedback: name/title header, clean section names, total at end.
+  // Generated feedback: name/title rows, Excel header, total rows at the end.
   let out = await p.inputValue('[data-testid="feedback-text"]');
   assert.match(out, /^carol_777\n/);
-  assert.match(out, /Total: [\d.]+\/30 \([\d.]+\/113 points · [\d.]+\/100\)/);
+  assert.match(out, /\nCriteria\tMark\tComments\n/);
+  assert.match(out, /\nTotal\t[\d.]+\/30 \([\d.]+\/113 points · [\d.]+\/100\)\t/);
   assert.ok(!/^A — /m.test(out), 'feedback strips the "A — " section prefixes');
 
   // The totals bar and section headers show the /100 display layer.
@@ -55,8 +56,11 @@ test('feedback panel: generated text, per-section notes, late days, copy button'
   const after = parseFloat(await p.textContent('[data-testid="mapped-mark"]'));
   assert.equal(after, Math.max(0, before - 3), '2 late days → −3 marks');
   out = await p.inputValue('[data-testid="feedback-text"]');
-  assert.match(out, /Late: 2 day/);
+  assert.match(out, /Late\t2 day/);
 
   // Copy button exists and clicking it does not blow up.
   await p.click('[data-testid="copy-feedback"]');
+
+  // Coordinator AI/template report is downloadable from the toolbar.
+  assert.ok(await p.$('[data-testid="ai-report"]'), 'AI report button in the toolbar');
 });
