@@ -52,6 +52,8 @@ section.sec > h2 { font-size:14px; margin:0; padding:10px 14px;
 .req-toggle.pass { color:var(--pass); } .req-toggle.fail { color:var(--fail); }
 .ded-inst { display:flex; gap:8px; padding:4px 14px; align-items:center; }
 .ev-link { color:var(--accent); text-decoration:underline; cursor:pointer; }
+.sec-reset { font-size:11px; padding:1px 8px; margin-left:auto; margin-right:10px;
+  color:var(--muted); border:1px solid var(--line); border-radius:4px; }
 .sec-note { width:calc(100% - 28px); margin:6px 14px 10px; padding:6px; min-height:34px;
   border:1px solid var(--line); border-radius:6px; font:inherit; font-size:13px; resize:vertical; }
 .feedback-out { width:calc(100% - 28px); margin:8px 14px 12px; padding:8px; min-height:240px;
@@ -2046,6 +2048,25 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       const d = sheet.deductions.find(x => x.id === dedId);
       if (d && d.instances[index]) d.instances[index].confirmed = confirmed;
       A.scoring.recomputeTotals(sheet, config);
+    },
+
+    // Drop every marker override in one section, restoring the automated
+    // scores/verdicts. Other sections are untouched.
+    resetSection(sheet, config, sectionId) {
+      for (const row of sheet.items.filter(i => i.sectionId === sectionId)) {
+        row.final = row.auto;
+        if (row.required) row.passed = row.auto === 1;
+        row.overridden = false;
+      }
+      A.scoring.recomputeTotals(sheet, config);
+    },
+
+    // Back to the initial confirmation state: assisted instances unconfirmed
+    // (marker must tick each), auto instances confirmed.
+    resetDeductions(sheet, config) {
+      for (const d of sheet.deductions)
+        for (const inst of d.instances) inst.confirmed = d.mode !== 'assisted';
+      A.scoring.recomputeTotals(sheet, config);
     }
   };
 
@@ -2390,6 +2411,10 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       const share = pv()?.sections[sec.id];
       const box = el('section', { class: 'sec' },
         el('h2', {}, sec.title,
+          el('button', { class: 'sec-reset', 'data-testid': 'sec-reset',
+            title: 'Clear this section’s overrides and note',
+            onclick: () => { A.scoring.resetSection(s, A.state.config, sec.id);
+              if (rec.notes) delete rec.notes[sec.id]; renderAll(); } }, 'reset'),
           el('span', {}, sec.points
             ? `${sec.score} / ${sec.points}${share ? ` · ${share.scaled}/${share.weight}` : ''}`
             : `${sec.reqMet}/${sec.reqTotal} met`)));
@@ -2412,7 +2437,11 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       d.append(box);
     }
     const dedHeaderEl = el('span', {}, String(s.deductions.reduce((a, x) => a + x.total, 0)));
-    const dedBox = el('section', { class: 'sec' }, el('h2', {}, 'Deductions', dedHeaderEl));
+    const dedBox = el('section', { class: 'sec' }, el('h2', {}, 'Deductions',
+      el('button', { class: 'sec-reset', 'data-testid': 'ded-reset',
+        title: 'Restore all deduction confirmations to their automatic state',
+        onclick: () => { A.scoring.resetDeductions(s, A.state.config); renderAll(); } }, 'reset'),
+      dedHeaderEl));
     // Deduction checkboxes update totals in place (rather than a full renderAll())
     // so the checked input isn't torn down mid-interaction — Playwright's
     // ElementHandle#check verifies its own node stays attached after the click.

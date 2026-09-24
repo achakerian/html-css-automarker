@@ -66,7 +66,10 @@ below for building your own from the in-app JSON rubric builder.
    also shows its scaled share of 100, e.g. Navigation `26/30 · 23/26.5`.
    Set **Days late** in the totals bar to apply the sheet's
    −1.5-marks-per-day penalty to the mapped mark. Click **Copy** to put
-   the text on the clipboard. The **AI report** toolbar button downloads
+   the text on the clipboard. Every section header carries a small
+   **reset** button that clears that section's score overrides and note
+   (the Deductions box's reset restores all confirmations to their
+   automatic state). The **AI report** toolbar button downloads
    a coordinator-ready HTML summary of AI/template-usage indicators
    across the whole batch, most-flagged first, with each flagged
    submission's fired signals detailed.

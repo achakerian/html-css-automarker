@@ -124,6 +124,51 @@ test('feedbackText shows the /100 view: overall percent and section shares', asy
   assert.match(text, /Styling \(3\/5\)\n - Page weight: 3\/5/, 'imperfect criterion listed under its section');
 });
 
+test('resetSection restores a section to its automated state, leaving others alone', async () => {
+  const r = await app.page.evaluate(async ({ site, cfg }) => {
+    const sub = await Automarker.submissionFromTexts('alice', site);
+    const analysis = await Automarker.analyzeSubmission(sub);
+    const sheet = await Automarker.scoring.scoreSubmission({ submission: sub, ...analysis }, cfg);
+    Automarker.scoring.applyOverride(sheet, cfg, 'w', 1);
+    Automarker.scoring.applyOverride(sheet, cfg, 'req-email', true);
+    const overridden = { w: sheet.items.find(i => i.id === 'w').final,
+      email: sheet.items.find(i => i.id === 'req-email').passed };
+    Automarker.scoring.resetSection(sheet, cfg, 's');
+    const w = sheet.items.find(i => i.id === 'w');
+    const email = sheet.items.find(i => i.id === 'req-email');
+    return { overridden, wFinal: w.final, wAuto: w.auto, wFlag: w.overridden,
+      emailPassed: email.passed, emailFlag: email.overridden, total: sheet.total };
+  }, { site: SITE, cfg: CFG });
+  assert.equal(r.overridden.w, 1);
+  assert.equal(r.overridden.email, true);
+  assert.equal(r.wFinal, r.wAuto, 'score restored to the automated value');
+  assert.equal(r.wFlag, false, 'overridden flag cleared');
+  assert.equal(r.emailPassed, true, 'other sections keep their overrides');
+  assert.equal(r.emailFlag, true);
+  assert.equal(r.total, r.wAuto, 'totals recomputed');
+});
+
+test('resetDeductions restores confirmation state per deduction mode', async () => {
+  const r = await app.page.evaluate(async site => {
+    const cfg = { meta: { id: 'm', title: 'M', totalPoints: 5, minPages: 1,
+        viewport: { w: 1280, h: 800 }, weightThresholds: { fullKB: 1536, partialKB: 4096 } },
+      topic: { keywords: [], sectionHints: [], spellWhitelist: [], logoHints: [], locationHints: [] },
+      sections: [{ id: 's', title: 'S', points: 5, items: [
+        { id: 'w', label: 'weight', check: 'pageWeight', mode: 'auto', scope: 'home', max: 5 } ] }],
+      deductions: [{ id: 'spelling', label: 'sp', perInstance: -1, check: 'spelling', mode: 'assisted' }] };
+    const sub = await Automarker.submissionFromTexts('t', site);
+    const analysis = await Automarker.analyzeSubmission(sub);
+    const sheet = await Automarker.scoring.scoreSubmission({ submission: sub, ...analysis }, cfg);
+    Automarker.scoring.setDeductionConfirmed(sheet, cfg, 'spelling', 0, true);
+    const before = sheet.total;
+    Automarker.scoring.resetDeductions(sheet, cfg);
+    return { before, after: sheet.total,
+      confirmed: sheet.deductions[0].instances.map(i => i.confirmed) };
+  }, { 'index.html': '<p>simply teh best</p>' });
+  assert.ok(r.before < r.after, 'confirming a spelling deduction lowered the total');
+  assert.ok(r.confirmed.every(c => c === false), 'assisted instances back to unconfirmed');
+});
+
 test('CSV carries a lateDays column', async () => {
   const csv = await app.page.evaluate(async ({ site, cfg }) => {
     const sub = await Automarker.submissionFromTexts('alice', site);

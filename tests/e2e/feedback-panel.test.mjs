@@ -66,3 +66,23 @@ test('feedback panel: generated text, per-section notes, late days, copy button'
   // Coordinator AI/template report is downloadable from the toolbar.
   assert.ok(await p.$('[data-testid="ai-report"]'), 'AI report button in the toolbar');
 });
+
+test('section reset button clears overrides and the section note', async () => {
+  const { page: p } = app;
+  await p.click('[data-testid="record-item"]');
+  await p.waitForSelector('[data-row-id="home-weight"]');
+  const before = parseFloat(await p.textContent('[data-testid="total-points"]'));
+
+  await p.click('[data-row-id="home-weight"] .score-btns button[data-val="0"]');
+  await p.fill('[data-row-id="home-weight"] >> xpath=ancestor::section >> [data-testid="sec-note"]',
+    'temp note to be cleared');
+  assert.match(await p.getAttribute('[data-row-id="home-weight"]', 'class'), /overridden/);
+
+  await p.click('[data-row-id="home-weight"] >> xpath=ancestor::section >> [data-testid="sec-reset"]');
+  assert.equal(parseFloat(await p.textContent('[data-testid="total-points"]')), before,
+    'total restored after reset');
+  assert.ok(!/overridden/.test(await p.getAttribute('[data-row-id="home-weight"]', 'class')));
+  const out = await p.inputValue('[data-testid="feedback-text"]');
+  assert.ok(!out.includes('temp note to be cleared'), 'section note cleared by reset');
+  assert.ok(await p.$('[data-testid="ded-reset"]'), 'deductions box has a reset too');
+});
