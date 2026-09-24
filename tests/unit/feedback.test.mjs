@@ -45,7 +45,7 @@ test('setLateDays subtracts 1.5 marks per day from the mapped mark, clamped at 0
   assert.equal(r.days, 0);
 });
 
-test('feedbackText is concise: mark line, imperfect rows only, notes appended per section', async () => {
+test('feedbackText is clean: name/title header, dashed criteria, notes in place, total at end', async () => {
   const text = await app.page.evaluate(async ({ site, cfg }) => {
     const sub = await Automarker.submissionFromTexts('alice', site);
     const analysis = await Automarker.analyzeSubmission(sub);
@@ -53,17 +53,30 @@ test('feedbackText is concise: mark line, imperfect rows only, notes appended pe
     return Automarker.exporter.feedbackText(
       { name: 'alice', sheet, notes: { s: 'Tighten your CSS.', r: 'See the contact page brief.' } }, cfg);
   }, { site: SITE, cfg: CFG });
-  assert.match(text, /alice — Mini/);
-  assert.match(text, /Mark: \d+(\.\d+)?\/10/);
-  assert.match(text, /Styling \(5\/5 · 100\/100\)/, 'scored section header carries the score and /100 share');
-  assert.ok(!/Page weight/.test(text), 'full-mark rows are not listed — concise output');
-  assert.match(text, /Requirements \(0\/1 met\)/);
-  assert.match(text, /✗ Email link present/, 'unmet required rows are listed');
-  const sIdx = text.indexOf('Styling'), note1 = text.indexOf('Tighten your CSS.');
+  assert.match(text, /^alice\nMini\n/, 'name and rubric title head the output');
+  assert.match(text, /Styling \(5\/5\)\nTighten your CSS\./, 'noted section appears even at full marks');
+  assert.ok(!/Page weight/.test(text), 'full-mark rows are not listed');
+  assert.match(text, /Requirements \(0\/1 met\)\n - Email link present: not met/,
+    'unmet required rows are dashed criteria lines');
   const rIdx = text.indexOf('Requirements ('), note2 = text.indexOf('See the contact page brief.');
-  assert.ok(sIdx < note1 && note1 < rIdx, 'section note sits inside its own section');
-  assert.ok(rIdx < note2, 'second note follows its section');
-  assert.match(text, /Deductions: none/);
+  assert.ok(rIdx >= 0 && rIdx < note2, 'second note follows its section');
+  assert.ok(!/Deductions/.test(text), 'no deductions → no deductions block');
+  assert.match(text, /\nTotal: \d+(\.\d+)?\/10 \(5\/5 points · 100\/100\)\nRequirements: 0\/1 met$/,
+    'total block closes the output');
+});
+
+test('feedbackText omits fully-met sections without notes; clean sheet says so', async () => {
+  const text = await app.page.evaluate(async ({ site, cfg }) => {
+    const sub = await Automarker.submissionFromTexts('alice', site);
+    const analysis = await Automarker.analyzeSubmission(sub);
+    const sheet = await Automarker.scoring.scoreSubmission({ submission: sub, ...analysis }, cfg);
+    Automarker.scoring.applyOverride(sheet, cfg, 'req-email', true);
+    return Automarker.exporter.feedbackText({ name: 'alice', sheet }, cfg);
+  }, { site: SITE, cfg: CFG });
+  assert.ok(!/Styling/.test(text), 'full-mark section without a note is omitted');
+  assert.ok(!/Requirements \(/.test(text), 'fully-met required section is omitted');
+  assert.match(text, /All rubric criteria met\./);
+  assert.match(text, /Total: 10\/10/);
 });
 
 test('feedbackText includes the late penalty line only when set', async () => {
@@ -89,9 +102,9 @@ test('feedbackText shows the /100 view: overall percent and section shares', asy
     Automarker.scoring.applyOverride(sheet, cfg, 'w', 3);
     return Automarker.exporter.feedbackText({ name: 'alice', sheet }, cfg);
   }, { site: SITE, cfg: CFG });
-  assert.match(text, /Overall: 60\/100/, '3/5 points → 60/100');
-  assert.match(text, /Styling \(3\/5 · 60\/100\)/, 'scored section header carries its /100 share');
-  assert.ok(!/Requirements \(0\/1 met\).*100/.test(text), 'point-less sections get no /100 share');
+  assert.match(text, /Total: 6\/10 \(3\/5 points · 60\/100\)/, '3/5 points → 60/100 in the total line');
+  assert.match(text, /Styling \(3\/5\)\n/, 'section headers stay clean — no /100 share');
+  assert.match(text, / - Page weight: 3\/5/, 'imperfect scored rows are dashed criteria');
 });
 
 test('CSV carries a lateDays column', async () => {

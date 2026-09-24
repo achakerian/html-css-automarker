@@ -26,11 +26,11 @@ test('feedback panel: generated text, per-section notes, late days, copy button'
   await p.click('[data-testid="record-item"]');
   await p.waitForSelector('[data-testid="feedback-text"]');
 
-  // Generated feedback carries the mark line and the submission name.
+  // Generated feedback: name/title header, clean section names, total at end.
   let out = await p.inputValue('[data-testid="feedback-text"]');
-  assert.match(out, /carol_777 — /);
-  assert.match(out, /Mark: [\d.]+\/30/);
-  assert.match(out, /Overall: [\d.]+\/100/);
+  assert.match(out, /^carol_777\n/);
+  assert.match(out, /Total: [\d.]+\/30 \([\d.]+\/113 points · [\d.]+\/100\)/);
+  assert.ok(!/^A — /m.test(out), 'feedback strips the "A — " section prefixes');
 
   // The totals bar and section headers show the /100 display layer.
   const total = parseFloat(await p.textContent('[data-testid="total-points"]'));

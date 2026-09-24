@@ -2105,33 +2105,39 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       return lines.join('\n') + '\n';
     },
 
-    // Concise plain-text feedback for pasting into the LMS: mark line, then per
-    // section the imperfect rows only, each followed by the marker's own note.
+    // Clean plain-text feedback for pasting into the LMS: name/title header,
+    // then only the sections needing attention (imperfect rows as dashed
+    // criteria, marker notes in place), deductions if any, total block last.
     feedbackText(record, config) {
       const s = record.sheet, notes = record.notes ?? {};
-      const ded = s.deductions.reduce((a, d) => a + d.total, 0);
       const pv = A.scoring.percentView(s, config);
-      const lines = [`${record.name} — ${config.meta.title}`,
-        `Mark: ${s.mappedMark ?? s.total}/${config.meta.mappedMarks ?? s.totalPoints ?? ''}` +
-        ` (${s.total}${s.totalPoints ? `/${s.totalPoints}` : ''} points${
-          ded ? `, ${ded} deduction points` : ''}).` +
-        (s.requirementsTotal ? ` Requirements: ${s.requirementsMet}/${s.requirementsTotal} met.` : '') +
-        (pv ? ` Overall: ${pv.overall}/100.` : '')];
-      if (s.lateDays) lines.push(`Late: ${s.lateDays} day(s), −${A.util.round1(1.5 * s.lateDays)} marks.`);
+      const lines = [record.name, config.meta.title, ''];
       for (const sec of s.sections) {
-        const share = pv?.sections[sec.id];
-        lines.push('', sec.points
-          ? `${sec.title} (${sec.score}/${sec.points}${share ? ` · ${share.scaled}/${share.weight}` : ''})`
-          : `${sec.title} (${sec.reqMet}/${sec.reqTotal} met)`);
-        for (const row of s.items.filter(i => i.sectionId === sec.id)) {
-          if (row.required && !row.passed) lines.push(`✗ ${row.label}`);
-          else if (row.max && row.final < row.max) lines.push(`- ${row.label}: ${row.final}/${row.max}`);
-        }
-        if (notes[sec.id]?.trim()) lines.push(notes[sec.id].trim());
+        const rows = s.items.filter(i => i.sectionId === sec.id);
+        const flaws = rows.filter(r => (r.required && !r.passed) || (r.max && r.final < r.max));
+        const note = notes[sec.id]?.trim();
+        if (!flaws.length && !note) continue;
+        const title = sec.title.replace(/^A — /, '');
+        lines.push(sec.points ? `${title} (${sec.score}/${sec.points})`
+                              : `${title} (${sec.reqMet}/${sec.reqTotal} met)`);
+        for (const row of flaws)
+          lines.push(row.required ? ` - ${row.label}: not met`
+                                  : ` - ${row.label}: ${row.final}/${row.max}`);
+        if (note) lines.push(note);
       }
-      const dedParts = s.deductions.filter(d => d.total)
-        .map(d => `${d.label.replace(/\s*\(.*\)$/, '')}: ${d.total}`);
-      lines.push('', dedParts.length ? `Deductions: ${dedParts.join('; ')}.` : 'Deductions: none.');
+      const deds = s.deductions.filter(d => d.total);
+      if (deds.length) {
+        lines.push(`Deductions (${deds.reduce((a, d) => a + d.total, 0)})`);
+        for (const d of deds) lines.push(` - ${d.label.replace(/\s*\(.*\)$/, '')}: ${d.total}`);
+      }
+      if (lines.length === 3) lines.push('All rubric criteria met.');
+      lines.push('');
+      if (s.lateDays) lines.push(`Late: ${s.lateDays} day(s), −${A.util.round1(1.5 * s.lateDays)} marks`);
+      const pts = `${s.total}${s.totalPoints ? `/${s.totalPoints}` : ''} points`;
+      lines.push(s.mappedMark != null
+        ? `Total: ${s.mappedMark}/${config.meta.mappedMarks} (${pts}${pv ? ` · ${pv.overall}/100` : ''})`
+        : `Total: ${pts}${pv ? ` (${pv.overall}/100)` : ''}`);
+      if (s.requirementsTotal) lines.push(`Requirements: ${s.requirementsMet}/${s.requirementsTotal} met`);
       return lines.join('\n');
     },
 
