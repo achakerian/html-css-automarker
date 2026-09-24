@@ -56,20 +56,20 @@ below for building your own from the in-app JSON rubric builder.
    and following a spelling link highlights every occurrence in the preview
    so you can judge it in context.
 7. The **Feedback (copy & paste)** panel at the bottom of the score sheet
-   assembles a tab-separated **Criteria / Mark / Comments** table that
-   pastes straight into Excel or Google Sheets cells: one row per rubric
-   criterion (✓/✗ for requirements, `1/2` for scored rows, first failure
-   evidence in Comments), section rows carrying subtotals and your notes,
-   deduction rows when nonzero, and a final `Total` row with the /30 mark,
-   points, and the /100 view (each scored section's in-app header also
-   shows its scaled share of 100, e.g. Navigation `26/30 · 23/26.5`).
-   Every section box has a small notes field — anything you type lands in
-   that section row's Comments cell, live. Set **Days late** in the totals
-   bar to apply the sheet's −1.5-marks-per-day penalty to the mapped mark.
-   Click **Copy** to put the whole table on the clipboard. The **AI
-   report** toolbar button downloads a coordinator-ready HTML summary of
-   AI/template-usage indicators across the whole batch, most-flagged
-   first, with each flagged submission's fired signals detailed.
+   assembles concise "efeedback" text ready for the LMS: an
+   `AI Usage observed - mark tentative` banner when the authorship
+   analyzer fired, then only the sections needing attention (each
+   imperfect criterion as a ` - label: 1/2` / `not met` line, your typed
+   per-section notes in place), deductions when nonzero, and a closing
+   `Total: 26.8/30 (101/113 points · 89.4/100)` /
+   `Requirements: 43/45 met` block. Each scored section's in-app header
+   also shows its scaled share of 100, e.g. Navigation `26/30 · 23/26.5`.
+   Set **Days late** in the totals bar to apply the sheet's
+   −1.5-marks-per-day penalty to the mapped mark. Click **Copy** to put
+   the text on the clipboard. The **AI report** toolbar button downloads
+   a coordinator-ready HTML summary of AI/template-usage indicators
+   across the whole batch, most-flagged first, with each flagged
+   submission's fired signals detailed.
 8. Export a CSV across every marked submission, or a per-student HTML
    feedback report, from the toolbar. For large batches, export the CSV
    periodically as you go rather than only at the end — it costs nothing and

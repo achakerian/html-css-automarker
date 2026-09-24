@@ -2105,39 +2105,43 @@ window.Automarker = { checks: {}, checkMeta: {}, presets: {}, util: {},
       return lines.join('\n') + '\n';
     },
 
-    // Excel-ready feedback: tab-separated Criteria / Mark / Comments rows that
-    // paste straight into spreadsheet cells. Every criterion is listed; the
-    // comments column carries the first failure evidence for imperfect rows
-    // and the marker's per-section notes on the section row.
+    // "efeedback" text for pasting into the LMS: an AI-usage banner when the
+    // authorship analyzer fired, then only the sections needing attention
+    // (imperfect rows as dashed criteria, marker notes in place), deductions
+    // if any, and the total block last.
     feedbackText(record, config) {
       const s = record.sheet, notes = record.notes ?? {};
       const pv = A.scoring.percentView(s, config);
-      // One cell: no tabs/newlines, and neutralise leading formula characters.
-      const cell = v => { let t = String(v ?? '').replace(/[\t\n\r]+/g, ' ').trim();
-        if (/^[=+\-@]/.test(t)) t = `'${t}`; return t; };
-      const lines = [cell(record.name), cell(config.meta.title), 'Criteria\tMark\tComments'];
-      const row = (c, m, com = '') => lines.push(`${cell(c)}\t${cell(m)}\t${cell(com)}`);
+      const lines = [];
+      if (record.authorship && record.authorship.level !== 'none')
+        lines.push('AI Usage observed - mark tentative', '');
+      const bodyStart = lines.length;
       for (const sec of s.sections) {
-        row(sec.title.replace(/^A — /, ''),
-          sec.points ? `${sec.score}/${sec.points}` : `${sec.reqMet}/${sec.reqTotal} met`,
-          notes[sec.id] ?? '');
-        for (const r of s.items.filter(i => i.sectionId === sec.id)) {
-          const imperfect = (r.required && !r.passed) || (r.max && r.final < r.max);
-          row(r.label, r.required ? (r.passed ? '✓' : '✗') : `${r.final}/${r.max}`,
-            imperfect ? (r.evidence.find(e => e.level === 'fail')?.text ?? '') : '');
-        }
+        const rows = s.items.filter(i => i.sectionId === sec.id);
+        const flaws = rows.filter(r => (r.required && !r.passed) || (r.max && r.final < r.max));
+        const note = notes[sec.id]?.trim();
+        if (!flaws.length && !note) continue;
+        const title = sec.title.replace(/^A — /, '');
+        lines.push(sec.points ? `${title} (${sec.score}/${sec.points})`
+                              : `${title} (${sec.reqMet}/${sec.reqTotal} met)`);
+        for (const row of flaws)
+          lines.push(row.required ? ` - ${row.label}: not met`
+                                  : ` - ${row.label}: ${row.final}/${row.max}`);
+        if (note) lines.push(note);
       }
       const deds = s.deductions.filter(d => d.total);
       if (deds.length) {
-        row('Deductions', `−${-deds.reduce((a, d) => a + d.total, 0)}`);
-        for (const d of deds) row(d.label.replace(/\s*\(.*\)$/, ''), `−${-d.total}`,
-          d.instances.filter(i => i.confirmed).map(i => i.text).join('; '));
+        lines.push(`Deductions (${deds.reduce((a, d) => a + d.total, 0)})`);
+        for (const d of deds) lines.push(` - ${d.label.replace(/\s*\(.*\)$/, '')}: ${d.total}`);
       }
-      if (s.lateDays) row('Late', `${s.lateDays} day(s)`, `−${A.util.round1(1.5 * s.lateDays)} marks`);
+      if (s.lateDays) lines.push(`Late: ${s.lateDays} day(s), −${A.util.round1(1.5 * s.lateDays)} marks`);
+      if (lines.length === bodyStart) lines.push('All rubric criteria met.');
+      lines.push('');
       const pts = `${s.total}${s.totalPoints ? `/${s.totalPoints}` : ''} points`;
-      row('Total', s.mappedMark != null
-        ? `${s.mappedMark}/${config.meta.mappedMarks} (${pts}${pv ? ` · ${pv.overall}/100` : ''})`
-        : `${pts}${pv ? ` (${pv.overall}/100)` : ''}`);
+      lines.push(s.mappedMark != null
+        ? `Total: ${s.mappedMark}/${config.meta.mappedMarks} (${pts}${pv ? ` · ${pv.overall}/100` : ''})`
+        : `Total: ${pts}${pv ? ` (${pv.overall}/100)` : ''}`);
+      if (s.requirementsTotal) lines.push(`Requirements: ${s.requirementsMet}/${s.requirementsTotal} met`);
       return lines.join('\n');
     },
 

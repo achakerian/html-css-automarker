@@ -45,7 +45,7 @@ test('setLateDays subtracts 1.5 marks per day from the mapped mark, clamped at 0
   assert.equal(r.days, 0);
 });
 
-test('feedbackText is a tab-separated criteria/mark/comments table', async () => {
+test('feedbackText matches the efeedback format exactly', async () => {
   const text = await app.page.evaluate(async ({ site, cfg }) => {
     const sub = await Automarker.submissionFromTexts('alice', site);
     const analysis = await Automarker.analyzeSubmission(sub);
@@ -53,34 +53,49 @@ test('feedbackText is a tab-separated criteria/mark/comments table', async () =>
     return Automarker.exporter.feedbackText(
       { name: 'alice', sheet, notes: { s: 'Tighten your CSS.', r: 'See the contact page brief.' } }, cfg);
   }, { site: SITE, cfg: CFG });
-  const rows = text.split('\n');
-  assert.equal(rows[0], 'alice');
-  assert.equal(rows[1], 'Mini');
-  assert.equal(rows[2], 'Criteria\tMark\tComments', 'header row for Excel columns');
-  assert.ok(rows.includes('Styling\t5/5\tTighten your CSS.'),
-    'section row: subtotal in Mark, note in Comments');
-  assert.match(text, /\nPage weight\t5\/5\t/, 'every criterion gets a row, even full marks');
-  assert.ok(rows.includes('Requirements\t0/1 met\tSee the contact page brief.'));
-  assert.match(text, /\nEmail link present\t✗\t/, 'unmet required rows marked ✗');
-  assert.ok(!rows.some(r => r.startsWith('Deductions')), 'no deductions → no deductions rows');
-  assert.match(text, /\nTotal\t\d+(\.\d+)?\/10 \(5\/5 points · 100\/100\)\t$/,
-    'the Total row closes the table');
-  assert.ok(!rows.some(r => r.startsWith('Requirements met')),
-    'no requirements-met summary row');
+  assert.equal(text, [
+    'Styling (5/5)',
+    'Tighten your CSS.',
+    'Requirements (0/1 met)',
+    ' - Email link present: not met',
+    'See the contact page brief.',
+    '',
+    'Total: 10/10 (5/5 points · 100/100)',
+    'Requirements: 0/1 met',
+  ].join('\n'));
 });
 
-test('feedbackText sanitises cells: no tabs/newlines/leading formula chars from notes', async () => {
+test('feedbackText omits fully-met sections; clean sheet says so', async () => {
   const text = await app.page.evaluate(async ({ site, cfg }) => {
     const sub = await Automarker.submissionFromTexts('alice', site);
     const analysis = await Automarker.analyzeSubmission(sub);
     const sheet = await Automarker.scoring.scoreSubmission({ submission: sub, ...analysis }, cfg);
-    return Automarker.exporter.feedbackText(
-      { name: 'alice', sheet, notes: { s: '=SUM(A1)\tevil\nnote' } }, cfg);
+    Automarker.scoring.applyOverride(sheet, cfg, 'req-email', true);
+    return Automarker.exporter.feedbackText({ name: 'alice', sheet }, cfg);
   }, { site: SITE, cfg: CFG });
-  const cell = text.split('\n').find(r => r.startsWith('Styling\t')).split('\t')[2];
-  assert.ok(!cell.startsWith('='), 'leading = neutralised against formula injection');
-  assert.ok(!/[\t\n]/.test(cell), 'tabs/newlines inside a cell are flattened');
-  assert.ok(cell.includes('evil') && cell.includes('note'), 'content preserved');
+  assert.equal(text, [
+    'All rubric criteria met.',
+    '',
+    'Total: 10/10 (5/5 points · 100/100)',
+    'Requirements: 1/1 met',
+  ].join('\n'));
+});
+
+test('feedbackText leads with the AI-usage banner when indicators fired', async () => {
+  const { flagged, clean } = await app.page.evaluate(async ({ site, cfg }) => {
+    const sub = await Automarker.submissionFromTexts('alice', site);
+    const analysis = await Automarker.analyzeSubmission(sub);
+    const sheet = await Automarker.scoring.scoreSubmission({ submission: sub, ...analysis }, cfg);
+    const authorship = { level: 'strong', checked: 13,
+      signals: Array.from({ length: 7 }, (_, i) => ({ id: `s${i}`, label: 'x', detail: 'y' })) };
+    return {
+      flagged: Automarker.exporter.feedbackText({ name: 'a', sheet, authorship }, cfg),
+      clean: Automarker.exporter.feedbackText(
+        { name: 'a', sheet, authorship: { level: 'none', checked: 13, signals: [] } }, cfg),
+    };
+  }, { site: SITE, cfg: CFG });
+  assert.match(flagged, /^AI Usage observed - mark tentative\n\n/, 'banner heads the output');
+  assert.ok(!/AI Usage/.test(clean), 'no banner when no indicators');
 });
 
 test('feedbackText includes the late penalty line only when set', async () => {
@@ -94,7 +109,7 @@ test('feedbackText includes the late penalty line only when set', async () => {
     return { withLate, without };
   }, { site: SITE, cfg: CFG });
   assert.ok(!/[Ll]ate/.test(without));
-  assert.match(withLate, /\nLate\t2 day\(s\)\t−3 marks/);
+  assert.match(withLate, /\nLate: 2 day\(s\), −3 marks\n/);
 });
 
 test('feedbackText shows the /100 view: overall percent and section shares', async () => {
@@ -105,9 +120,8 @@ test('feedbackText shows the /100 view: overall percent and section shares', asy
     Automarker.scoring.applyOverride(sheet, cfg, 'w', 3);
     return Automarker.exporter.feedbackText({ name: 'alice', sheet }, cfg);
   }, { site: SITE, cfg: CFG });
-  assert.match(text, /\nTotal\t6\/10 \(3\/5 points · 60\/100\)\t/, '3/5 points → 60/100 in the total row');
-  assert.match(text, /\nStyling\t3\/5\t/, 'section row keeps the raw score');
-  assert.match(text, /\nPage weight\t3\/5\t/, 'imperfect criterion row carries its mark');
+  assert.match(text, /\nTotal: 6\/10 \(3\/5 points · 60\/100\)\n/, '3/5 points → 60/100 in the total line');
+  assert.match(text, /Styling \(3\/5\)\n - Page weight: 3\/5/, 'imperfect criterion listed under its section');
 });
 
 test('CSV carries a lateDays column', async () => {
